@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Comma Footage Sync</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Comma Footage Sync</h1>
+  <div id="overall" class="pill">checking…</div>
+</header>
+
+<main>
+  <section class="card" id="checks-card">
+    <div class="card-head">
+      <h2>Setup checks</h2>
+      <button id="btn-recheck" class="ghost">Re-check</button>
+    </div>
+    <ul id="checks" class="checks"></ul>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>GPU</h2></div>
+    <div id="gpu"></div>
+  </section>
+
+  <section class="card wide">
+    <div class="card-head">
+      <h2>Transfer</h2>
+      <div class="actions">
+        <button id="btn-sync">Sync now</button>
+        <button id="btn-stop" class="danger">Stop</button>
+      </div>
+    </div>
+    <div class="metrics">
+      <div><span class="label">Transfer speed</span><span id="speed" class="big">0.0 MB/s</span></div>
+      <div><span class="label">Network in / out</span><span id="net" class="big">0 / 0 Mb/s</span></div>
+      <div><span class="label">Encoder</span><span id="encoder" class="big">—</span></div>
+      <div><span class="label">Encode queue</span><span id="queue" class="big">0</span></div>
+    </div>
+
+    <div class="progress-block">
+      <div class="progress-label"><span id="drive-label">Idle</span><span id="drive-pct">0%</span></div>
+      <div class="bar"><div id="drive-bar" class="fill"></div></div>
+      <div class="progress-label small"><span id="file-label">—</span><span id="file-pct"></span></div>
+      <div class="bar thin"><div id="file-bar" class="fill alt"></div></div>
+    </div>
+
+    <h3>Drives</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Drive</th><th>Status</th><th>Progress</th><th>Output / error</th></tr></thead>
+        <tbody id="drives"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>SSH key</h2></div>
+    <p class="muted">
+      The app uses its own key, separate from your personal SSH keys. Copy the public key to
+      <a href="https://github.com/settings/keys" target="_blank" rel="noopener">github.com/settings/keys</a>,
+      then on the comma: Settings → Developer → enable SSH and enter that GitHub username.
+    </p>
+    <div id="key-status" class="key-status"></div>
+    <textarea id="pubkey" readonly rows="3"></textarea>
+    <div class="actions">
+      <button id="btn-copy" class="ghost">Copy public key</button>
+      <button id="btn-gen" class="ghost">Generate key</button>
+      <button id="btn-regen" class="danger">Replace key</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Settings</h2></div>
+    <form id="settings">
+      <label>Comma IP / hostname <input name="comma_host" required></label>
+      <label>GitHub username <input name="github_user"></label>
+      <label>SSH port <input name="comma_port" type="number" min="1" max="65535"></label>
+      <label>Comma user <input name="comma_user"></label>
+      <label>Output folder (dataset) <input name="output_dir"></label>
+      <label>Minimum free space (GB) <input name="min_free_gb" type="number" step="0.5" min="0"></label>
+      <label>Scan every (minutes) <input name="scan_interval_min" type="number" min="1"></label>
+      <label>Skip drives newer than (seconds) <input name="min_age_secs" type="number" min="0"></label>
+      <label>Encoder
+        <select name="encoder">
+          <option value="auto">Auto (GPU if working)</option>
+          <option value="nvenc">GPU only (NVENC)</option>
+          <option value="cpu">CPU only (libx264)</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" name="delete_raw_after_encode"> Delete raw chunks after encoding</label>
+      <div class="actions">
+        <button type="submit">Save settings</button>
+        <button type="button" id="btn-test" class="ghost">Test comma connection</button>
+      </div>
+      <p id="settings-msg" class="muted"></p>
+    </form>
+  </section>
+
+  <section class="card wide">
+    <div class="card-head"><h2>Log</h2></div>
+    <pre id="log"></pre>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

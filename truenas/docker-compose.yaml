@@ -1,0 +1,41 @@
+# Paste this into TrueNAS:  Apps -> Discover Apps -> (⋮) -> Install via YAML
+#
+# Before you paste, change the lines marked  <-- EDIT
+#   1. the image name to your GitHub user and repository (lowercase)
+#   2. the host paths under volumes: to datasets on your TrueNAS pool
+#   3. the host port (left side of "ports:") if 8080 is already in use
+#
+# The container always listens on 8080 internally; only the left-hand (host) port changes.
+
+name: comma-sync
+
+services:
+  comma-sync:
+    image: ghcr.io/YOUR_GITHUB_USER/comma-sync:latest   # <-- EDIT (lowercase user and repo)
+    container_name: comma-sync
+    restart: unless-stopped
+    ports:
+      - "8080:8080"                                      # <-- EDIT host port if needed (e.g. "9090:8080")
+    environment:
+      DATA_DIR: /data
+      OUTPUT_DIR: /output
+      WEBUI_PORT: "8080"
+      ENCODER: auto                                      # auto | nvenc | cpu
+      SCAN_INTERVAL_MIN: "60"
+      MIN_FREE_GB: "20"
+      TZ: America/New_York                               # <-- EDIT your time zone
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+    volumes:
+      # App config, SSH key, sync ledger and raw chunks. Use a dedicated dataset.
+      - /mnt/YOUR_POOL/apps/comma-sync/data:/data        # <-- EDIT
+      # Finished videos. Point this at the dataset you want the MP4s in.
+      - /mnt/YOUR_POOL/comma-footage:/output             # <-- EDIT
+    # NVIDIA GPU for NVENC and the GPU monitor. Delete this block if you have no NVIDIA GPU.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

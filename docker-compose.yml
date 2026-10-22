@@ -1,0 +1,27 @@
+services:
+  comma-sync:
+    build: .
+    image: comma-sync:latest
+    container_name: comma-sync
+    restart: unless-stopped
+    ports:
+      - "${WEBUI_PORT:-8080}:${WEBUI_PORT:-8080}"
+    environment:
+      WEBUI_PORT: "${WEBUI_PORT:-8080}"
+      COMMA_HOST: "${COMMA_HOST:-}"        # optional: set the comma IP here, or in the web UI
+      GITHUB_USER: "${GITHUB_USER:-}"      # optional: the GitHub account the comma trusts
+      ENCODER: "${ENCODER:-auto}"          # auto | nvenc | cpu
+      SCAN_INTERVAL_MIN: "${SCAN_INTERVAL_MIN:-60}"
+      TZ: "${TZ:-America/New_York}"
+    volumes:
+      - ./data:/data                       # app config, SSH key, ledger, raw chunks
+      - /mnt/tank/comma-footage:/output    # <- change to your TrueNAS dataset path
+    # NVIDIA GPU for NVENC encoding and the GPU monitor.
+    # Requires the NVIDIA container runtime on the host (TrueNAS: enable GPU for the app).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
