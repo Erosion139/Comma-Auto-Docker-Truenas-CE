@@ -1,95 +1,133 @@
-# Comma Auto Docker
+# Comma Footage Sync
 
 Pulls dashcam footage off a comma device over your local network and turns each drive
 into one stacked H.264 MP4 (road on top, wide and driver below, mic audio included).
-Runs as a Docker container, for example on TrueNAS, with a web UI on a port you choose.
+Runs as a Docker container with a web UI on a port you choose. Built for TrueNAS Apps.
 
 Based on the method in [sourylime/comma-sync](https://github.com/sourylime/comma-sync):
 SSH as the `comma` user, footage in `/data/media/0/realdata/`, one folder per segment.
 
-## Install on TrueNAS (Apps)
+---
 
-TrueNAS pulls the app's image from GitHub's container registry (GHCR), so you install it
-from the Apps screen by pasting a compose file. No command line is needed.
+## Part 1 — Publish the image (one time, on GitHub)
 
-### One-time: publish the image from your repository
+TrueNAS installs apps from a Docker image. GitHub builds that image for you.
 
-1. Push this code to your GitHub repository's `main` branch.
-2. GitHub builds and publishes the image automatically (**Actions** tab → *Build and publish image*).
+1. Push this code to your repository's `main` branch.
+2. Open the **Actions** tab. The *Build and publish image* workflow runs and publishes the image to `ghcr.io/<your-user>/<repo>`.
 3. Make the image public so TrueNAS can pull it without a login:
-   your profile → **Packages** → `comma-sync` → **Package settings** → **Change visibility** → **Public**.
+   your profile → **Packages** → select the package → **Package settings** → **Change visibility** → **Public**.
+4. To make a versioned release, tag it: `git tag v1.0.0 && git push origin v1.0.0`.
+   This publishes `1.0.0`, `1.0`, and `latest`.
 
-To release a version, tag it: `git tag v1.0.0 && git push origin v1.0.0`. This publishes
-`ghcr.io/<you>/comma-sync:1.0.0`, `:1.0`, and `:latest`.
+Your image name is `ghcr.io/<your-user>/<repo>` in lowercase. Write it down for Part 2.
 
-### Install in the TrueNAS Apps screen
+---
 
-1. Open the TrueNAS web UI → **Apps** → **Discover Apps** → **⋮** (top right) → **Install via YAML**.
-2. Name the app `comma-sync`.
-3. Open [`truenas/docker-compose.yaml`](truenas/docker-compose.yaml), copy it, and paste it into the **Custom Config** box.
-4. Edit the lines marked `<-- EDIT`:
-   - the image (your GitHub user, lowercase),
-   - the two host paths under `volumes:` (create the datasets first, for example `apps/comma-sync/data` and `comma-footage`),
-   - the host port on the left of `ports:` if 8080 is taken,
-   - your time zone.
-5. Click **Save**. Open the web UI at `http://<truenas-ip>:<host-port>`.
-6. Continue with **Setup** below (steps 2–5).
+## Part 2 — Install in TrueNAS (guided Custom App wizard)
+
+1. In the TrueNAS web UI, go to **Apps** → **Discover Apps** → **Custom App**.
+
+2. **Application Name:** `comma-sync`
+
+3. **Image Configuration**
+   - **Repository:** `ghcr.io/<your-user>/<repo>`
+   - **Tag:** `latest` (or a version such as `1.0.0`)
+   - **Pull Policy:** *Pull if not present*
+
+4. **Container Configuration**
+   - **Timezone:** your time zone (for example `America/New_York`)
+   - **Restart Policy:** *Unless Stopped*
+   - **Environment Variables:** add each of these as a Name and Value pair:
+
+     | Name | Value |
+     |---|---|
+     | `DATA_DIR` | `/data` |
+     | `OUTPUT_DIR` | `/output` |
+     | `WEBUI_PORT` | `8080` |
+     | `ENCODER` | `auto` |
+     | `SCAN_INTERVAL_MIN` | `60` |
+     | `MIN_FREE_GB` | `20` |
+     | `NVIDIA_VISIBLE_DEVICES` | `all` |
+     | `NVIDIA_DRIVER_CAPABILITIES` | `compute,utility,video` |
+
+   The comma address and GitHub username are not needed here. You enter them later in the app's Settings page, so the install stays simple.
+
+5. **Network Configuration → Host Network: on.** This is required. The app finds the comma
+   on your LAN, which needs the same network view as your NAS. With Host Network on, the
+   port mapping is disabled and the web UI is served directly on port `8080` of the NAS.
+   (If you can't use Host Network, see *Finding the comma without Host Network* below.)
+
+6. **Portal Configuration** — click **Add** so the app shows an **Open** button in TrueNAS:
+   - **Name:** `Comma Sync`
+   - **Protocol:** HTTP
+   - **Use Node IP:** on
+   - **Port:** `8080` (must match `WEBUI_PORT`)
+   - **Path:** `/`
+
+7. **Storage Configuration** — add two volumes, each with **Type: Host Path**:
+
+   | Host Path (create these datasets first) | Mount Path | Purpose |
+   |---|---|---|
+   | `/mnt/<pool>/apps/comma-sync/data` | `/data` | App settings, SSH key, sync record, raw chunks |
+   | `/mnt/<pool>/comma-footage` | `/output` | Finished videos (the dataset you want the MP4s in) |
+
+   Keep **Read Only** off for both. The container runs as root, so leave **Custom User** off.
+
+8. **Resources Configuration → GPU Configuration** — if the GPU list appears, select your NVIDIA GPU and tick **Use this GPU**. If you have no NVIDIA GPU, skip this step and the app falls back to the CPU.
+
+9. Click **Save**. Wait for the app to show **Running**, then click **Open** (or go to `http://<truenas-ip>:8080`).
+
+10. Continue with **Part 3** to connect your comma.
 
 ### Updating
 
-To update, change the image tag in the app's config (for example to `:1.1.0`) and save.
-If you keep `:latest`, redeploy the app after a new release so it pulls the new image.
+Edit the app and change **Tag** (for example from `1.0.0` to `1.1.0`), then save. If you use `latest`, edit the app and save or redeploy to pull the newest image.
 
-### Notes
+### Settings you can change later
 
-- The GPU block in the compose file needs an NVIDIA GPU passed through to Apps. Delete that block if you don't have one.
-- Keep the `data` dataset separate from the output dataset. `data` holds the SSH key and the sync record.
-- This targets the Docker Compose-based Apps screen (the **Install via YAML** option). Older Kubernetes-based SCALE releases work differently and aren't covered here. Check your release's Apps screen if the menu doesn't match.
+Your data stays in the app's data folder and the output dataset, so you can edit the app's configuration without losing anything. The comma address, GitHub username, encoder mode, and scan schedule are set in the web UI's **Settings** page.
 
-## How it works
+---
 
-```
-scan the comma ─► downloader ─► (queue) ─► encoder ─► MP4 in your output folder
-                 one drive at a time        one drive at a time
-                 (the next drive downloads while the previous one encodes)
-```
+## Part 3 — Connect your comma (in the web UI)
 
-## Setup (about 5 minutes)
+### a. Register the app's SSH key
 
-### 1. Start the container
+The app creates its own key on first start. You don't need to make one.
 
-```bash
-cp .env.example .env        # edit the values you need (or leave the defaults)
-docker compose up -d --build
-```
-
-Edit `docker-compose.yml` and point the output volume at your dataset, for example
-`/mnt/tank/comma-footage:/output`. Open the web UI at `http://<truenas-ip>:<WEBUI_PORT>`
-(default `8080`).
-
-### 2. Create the SSH key (automatic)
-
-The app creates its own key the first time it starts. It is stored in `data/ssh/`, separate
-from any keys you use on your own computers. Open the **SSH key** panel and you will see the
-public key.
-
-### 3. Register the key on GitHub
-
-1. Click **Copy public key**.
+1. In the web UI, open the **SSH key** panel and click **Copy public key**.
 2. Go to <https://github.com/settings/keys> → **New SSH key** → paste → save.
-3. The comma trusts keys from a GitHub account, so note the username you used.
+3. Remember the GitHub username you used.
 
-### 4. Enable SSH on the comma
+### b. Enable SSH on the comma
 
 On the comma: **Settings → Developer → enable SSH**, then enter **that GitHub username**.
 
-### 5. Connect and sync
+### c. Connect and sync
 
-1. In **Settings**, enter the comma's IP address and your GitHub username, then click **Save settings**.
-2. Click **Test comma connection**. Everything in **Setup checks** should turn green.
-3. Click **Sync now**. Drives appear in the list as they download and encode.
+1. In **Settings**, enter your GitHub username and click **Save settings**. You don't need the comma's IP address.
+2. Click **Test comma connection**. The app searches your network, finds the comma, and confirms the key works. Everything in **Setup checks** should turn green.
+3. Click **Sync now**. Drives appear as they download and encode.
 
-The app also re-scans on its own every `SCAN_INTERVAL_MIN` minutes (default 60).
+The comma gets a new IP address on most connects, so the app finds it each time:
+
+1. It tries the address that worked last time.
+2. If that fails, it looks for the comma over mDNS (the comma advertises its SSH service).
+3. If that fails, it scans the local network for SSH hosts.
+
+Each candidate must accept the app's key and have openpilot installed. A different SSH server on the network is never mistaken for the comma. The app searches again on every scan, so the comma is picked up when it reconnects on a new address. **Find comma now** in Settings runs the search immediately.
+
+### Finding the comma without Host Network
+
+Automatic discovery needs the app to see your LAN. If you must keep Host Network off:
+
+- Set **Networks to search** in Settings to your home subnet, for example `192.168.1.0/24`.
+- mDNS discovery won't work from a bridged network, so only the subnet scan is used. That still finds the comma, but it takes a few seconds longer.
+
+The app scans on its own every `SCAN_INTERVAL_MIN` minutes (default 60).
+
+---
 
 ## Managing the SSH key
 
@@ -97,10 +135,8 @@ The app also re-scans on its own every `SCAN_INTERVAL_MIN` minutes (default 60).
 |---|---|
 | See the key and its status | SSH key panel |
 | Check it is still registered | Setup checks → *Key registered on GitHub* |
-| Replace the key | **Replace key** (then re-register the new public key on GitHub) |
-| Back it up | Copy `data/ssh/id_ed25519` somewhere safe (it is the private key) |
-
-Keep the private key file private: it lives in `data/ssh/` with 600 permissions.
+| Replace the key | **Replace key** (then add the new public key on GitHub) |
+| Back it up | Copy `data/ssh/id_ed25519` somewhere safe. It is the private key. |
 
 ## Setup checks
 
@@ -133,20 +169,20 @@ Each drive gets a folder named by its recording start time:
 ```
 
 The video is H.264 at 1280×1080: the road camera across the top (1280×720) and the wide and
-driver cameras side by side below (640×360 each). Audio comes from the comma's microphone,
-aligned to each one-minute segment.
+driver cameras side by side below (640×360 each). Mic audio is aligned to each one-minute segment.
 
-## Settings
+## Settings reference
 
-Set these in the web UI, or in `.env` / `docker-compose.yml` as defaults.
+Set these in the web UI, or as environment variables for defaults.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `WEBUI_PORT` | `8080` | Port for the web UI (restart the container after changing it) |
-| `COMMA_HOST` | *(empty)* | Comma IP or hostname |
-| `GITHUB_USER` | *(empty)* | GitHub account whose keys the comma trusts |
+| `WEBUI_PORT` | `8080` | Port the web UI listens on inside the container |
+| `COMMA_HOST` | *(empty)* | Optional first guess at the comma's address. Leave blank to auto-find. |
+| `SCAN_SUBNETS` | *(auto)* | Networks to search, for example `192.168.1.0/24`. Set this if Host Network is off. |
+| `GITHUB_USER` | *(empty)* | GitHub account whose keys the comma trusts (set in the UI) |
 | `COMMA_PORT` / `COMMA_USER` | `22` / `comma` | SSH details |
-| `OUTPUT_DIR` | `/output` | Where finished videos go (mount your dataset here) |
+| `OUTPUT_DIR` | `/output` | Where finished videos go |
 | `MIN_FREE_GB` | `20` | Warn when the output dataset has less free space than this |
 | `SCAN_INTERVAL_MIN` | `60` | Minutes between automatic scans |
 | `MIN_AGE_SECS` | `120` | Skip drives whose latest segment is newer than this (still recording) |
@@ -154,32 +190,42 @@ Set these in the web UI, or in `.env` / `docker-compose.yml` as defaults.
 | `FPS` | `20` | Frame rate of the recorded footage |
 | `CLEAN_RAW` | `0` | `1` = delete the downloaded raw chunks after a drive is encoded |
 
-## GPU encoding on TrueNAS
+## Troubleshooting
 
-- NVIDIA GPU encoding needs the GPU passed through to the container (the `deploy` section in
-  `docker-compose.yml`) and the NVIDIA container runtime on the host.
-- If the GPU is missing, encoding falls back to the CPU (`libx264`). Everything still works, just slower.
+- **Repository not found when installing**: the image is private. Make the package public (Part 1, step 3).
+- **"Comma rejected the key"**: the key is not on the GitHub account, or the username on the comma does not match.
+- **"No comma found"**: the comma is off, on another network, or SSH is off on it. If Host Network is off, set **Networks to search**. Then click **Find comma now**.
+- **"Could not reach GitHub"**: the container has no internet access. Registration can't be verified, but the comma connection still works.
+- **Downloads keep dropping**: the comma may reboot on weak power. The app retries automatically. A high-current USB-C supply helps.
+- **Drive stuck in "queued"**: the encoder is busy with the previous drive. Check the log for errors.
+
+---
+
+## Run locally (optional, for testing)
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+Then open `http://localhost:8080`.
 
 ## Files
 
 ```
-app/main.py        web server and API
-app/pipeline.py    downloader + encoder workers and the queue between them
-app/comma.py       SSH/SFTP access to the comma
-app/sshkeys.py     the app's SSH key: create, check, GitHub registration
-app/checks.py      setup checks
-app/encoder.py     ffmpeg: encoder test, concatenation, audio, stacked render
-app/monitor.py     GPU and network stats
-app/static/        the web UI
-Dockerfile         image definition
-truenas/           compose file to paste into TrueNAS Apps
-.github/workflows/ builds and publishes the image to GHCR
+app/main.py          web server and API
+app/pipeline.py      downloader and encoder workers, with the queue between them
+app/comma.py         SSH/SFTP access to the comma
+app/discovery.py     finds the comma on the network (last address, mDNS, subnet scan)
+app/sshkeys.py       the app's SSH key: create, check, GitHub registration
+app/checks.py        setup checks
+app/encoder.py       ffmpeg: encoder test, concatenation, audio, stacked render
+app/monitor.py       GPU and network stats
+app/static/          the web UI
+Dockerfile           image definition
+.github/workflows/   builds and publishes the image to GHCR
 ```
 
-## Troubleshooting
+## License
 
-- **"Comma rejected the key"**: the key is not on the GitHub account, or the username on the comma does not match. Re-check steps 3 and 4.
-- **"Nothing listening at …"**: wrong IP, the comma is off or not on the same network, or SSH is off on the comma.
-- **"Could not reach GitHub"**: the container has no internet access. Registration can't be verified, but the comma connection still works.
-- **Downloads keep dropping**: the comma may reboot on weak power. The app retries automatically. A high-current USB-C supply helps.
-- **Drive stuck in "queued"**: the encoder is busy with the previous drive. Check the log for errors.
+Add a `LICENSE` file for your repository. The upstream comma-sync project is MIT-licensed.

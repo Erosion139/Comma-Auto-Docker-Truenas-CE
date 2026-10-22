@@ -10,7 +10,9 @@ CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
 @dataclass
 class Settings:
-    comma_host: str = os.environ.get("COMMA_HOST", "")          # IP or hostname of the comma
+    comma_host: str = os.environ.get("COMMA_HOST", "")          # optional fixed IP; blank = auto-find
+    comma_found_via: str = ""                                    # how the current address was found
+    scan_subnets: str = os.environ.get("SCAN_SUBNETS", "")       # e.g. "192.168.1.0/24"; blank = auto
     comma_port: int = int(os.environ.get("COMMA_PORT", "22"))
     comma_user: str = os.environ.get("COMMA_USER", "comma")
     github_user: str = os.environ.get("GITHUB_USER", "")        # account whose keys the comma trusts

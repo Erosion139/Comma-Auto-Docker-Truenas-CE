@@ -72,6 +72,20 @@ def api_test_connection():
     return jsonify({"ok": ok, "message": msg})
 
 
+@app.post("/api/discover")
+def api_discover():
+    """Search the network for the comma now and save the address it answers on."""
+    try:
+        host = comma.resolve_host(force=True)
+    except RuntimeError as e:
+        checks.run_all(force=True)
+        return jsonify({"ok": False, "message": str(e)})
+    checks.run_all(force=True)
+    s = config.load()
+    return jsonify({"ok": True, "host": host,
+                    "message": f"Found the comma at {host} ({s.comma_found_via})."})
+
+
 @app.post("/api/sync")
 def api_sync():
     pipeline.request_sync()

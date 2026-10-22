@@ -1,16 +1,23 @@
 """Talk to the comma device over SSH/SFTP using the app's key.
 
+The comma's IP changes on most connects, so the address is resolved automatically
+(see discovery.py). A fixed address in Settings is only used as a first guess.
+
 Footage layout on the device (from the comma-sync project):
   /data/media/0/realdata/<route>--<segment>/{fcamera.hevc, ecamera.hevc, dcamera.hevc, qcamera.ts}
   road = fcamera, wide = ecamera, driver = dcamera, mic audio = qcamera.ts
 """
+import logging
 import re
 import socket
 from collections import defaultdict
 
 import paramiko
 
-from . import config, sshkeys
+# Sweeping the LAN makes paramiko log a traceback for every non-SSH host it touches.
+logging.getLogger("paramiko").setLevel(logging.CRITICAL)
+
+from . import config, discovery, sshkeys
 
 REALDATA = "/data/media/0/realdata"
 CAMERAS = {"fcamera.hevc": "road", "ecamera.hevc": "wide", "dcamera.hevc": "driver"}
@@ -29,18 +36,13 @@ def port_open(host: str, port: int, timeout: float = 1.5) -> bool:
         return False
 
 
-def connect(timeout: float = 10) -> paramiko.SSHClient:
-    """Open an SSH session with the app key. Raises on failure."""
+def _make_client(host: str, timeout: float = 10) -> paramiko.SSHClient:
     s = config.load()
-    if not s.comma_host:
-        raise RuntimeError("No comma address set. Enter it in Settings.")
-    if not sshkeys.check_local()[0]:
-        raise RuntimeError("SSH key is missing or invalid.")
     client = paramiko.SSHClient()
     # Comma host keys change on reflash, so we don't pin them (same approach as comma-sync).
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(
-        s.comma_host, port=s.comma_port, username=s.comma_user,
+        host, port=s.comma_port, username=s.comma_user,
         key_filename=sshkeys.PRIV, timeout=timeout, banner_timeout=timeout,
         auth_timeout=timeout, look_for_keys=False, allow_agent=False,
     )
@@ -48,24 +50,69 @@ def connect(timeout: float = 10) -> paramiko.SSHClient:
     return client
 
 
-def test_connection() -> tuple[bool, str]:
-    """Full check: reachable, key accepted, and the device looks like an openpilot comma."""
-    s = config.load()
-    if not s.comma_host:
-        return False, "No comma address set."
-    if not port_open(s.comma_host, s.comma_port):
-        return False, f"Nothing listening at {s.comma_host}:{s.comma_port}. Is the comma on the same network with SSH enabled?"
+def _is_comma(host: str) -> bool:
+    """Accepts our key and has the openpilot install. Anything else returns False."""
     try:
-        client = connect()
+        client = _make_client(host, timeout=5)
+    except Exception:  # noqa: BLE001 - wrong device, auth refused, or no SSH
+        return False
+    try:
+        _, out, _ = client.exec_command("test -d /data/openpilot && echo ok || echo no")
+        return out.read().decode().strip() == "ok"
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        client.close()
+
+
+def resolve_host(force: bool = False) -> str:
+    """Return the comma's current address, searching the network when needed.
+
+    The stored address is used while it still answers on the SSH port. Otherwise the
+    network is searched and the result is saved for next time.
+    """
+    s = config.load()
+    if not force and s.comma_host and port_open(s.comma_host, s.comma_port):
+        return s.comma_host
+    if not sshkeys.check_local()[0]:
+        raise RuntimeError("SSH key is missing or invalid — fix it in the SSH key panel first.")
+    try:
+        host, method = discovery.find(
+            _is_comma, s.comma_port,
+            last_known=s.comma_host, scan_subnets=s.scan_subnets,
+        )
+    except discovery.DiscoveryError as e:
+        raise RuntimeError(str(e)) from e
+    config.update({"comma_host": host, "comma_found_via": method})
+    return host
+
+
+def connect(timeout: float = 10) -> paramiko.SSHClient:
+    """Open an SSH session with the app key to the comma, found automatically."""
+    host = resolve_host()
+    return _make_client(host, timeout=timeout)
+
+
+def test_connection() -> tuple[bool, str]:
+    """Reachable, key accepted, and the device looks like an openpilot comma."""
+    try:
+        host = resolve_host(force=True)
+    except RuntimeError as e:
+        return False, str(e)
+    s = config.load()
+    try:
+        client = _make_client(host)
     except paramiko.AuthenticationException:
-        return False, "Comma rejected the key. Check GitHub registration and the GitHub username on the comma."
+        return False, (f"Found a device at {host}, but it rejected the key. Check the GitHub "
+                       "registration and the GitHub username on the comma.")
     except (paramiko.SSHException, OSError) as e:
-        return False, f"SSH failed: {e}"
+        return False, f"SSH to {host}:{s.comma_port} failed: {e}"
     try:
         _, out, _ = client.exec_command("test -d /data/openpilot && echo ok || echo no")
         if out.read().decode().strip() != "ok":
             return False, "Connected, but /data/openpilot not found — is this a comma device?"
-        return True, "Connected to the comma and authenticated."
+        via = s.comma_found_via or "found"
+        return True, f"Connected to the comma at {host} ({via})."
     finally:
         client.close()
 
@@ -117,7 +164,7 @@ def list_drives(client: paramiko.SSHClient) -> list[dict]:
 
 
 def download_file(sftp, remote: str, local: str, progress) -> None:
-    """Download one file. progress(bytes_done_this_call_delta) is called as data arrives.
+    """Download one file. progress(bytes_delta) is called as data arrives.
 
     Raising Stop from progress aborts the transfer.
     """

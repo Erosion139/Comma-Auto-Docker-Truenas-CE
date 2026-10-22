@@ -144,11 +144,11 @@ class Pipeline:
 
     def _scan(self):
         s = config.load()
-        if not sshkeys.check_local()[0] or not s.comma_host:
-            self.last_error = "SSH not ready — run the setup checks."
+        if not sshkeys.check_local()[0]:
+            self.last_error = "SSH key not ready — fix it in the SSH key panel."
             self.log(self.last_error)
             return []
-        self.log(f"Scanning {s.comma_host} for drives…")
+        self.log("Looking for the comma on the network…")
         try:
             client = comma.connect()
             try:

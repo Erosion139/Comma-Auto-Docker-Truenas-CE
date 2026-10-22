@@ -121,7 +121,7 @@ async function loadKey() {
 }
 
 /* ---------- settings ---------- */
-const FIELDS = ["comma_host", "github_user", "comma_port", "comma_user", "output_dir",
+const FIELDS = ["comma_host", "scan_subnets", "github_user", "comma_port", "comma_user", "output_dir",
   "min_free_gb", "scan_interval_min", "min_age_secs", "encoder", "delete_raw_after_encode"];
 async function loadSettings() {
   const s = await api("/api/settings");
@@ -157,6 +157,13 @@ $("btn-regen").onclick = async () => {
   if (!confirm("Replace the app's SSH key? You must re-register the new public key on GitHub.")) return;
   await api("/api/key/generate", { method: "POST", body: JSON.stringify({ overwrite: true }) });
   loadKey(); loadChecks(true);
+};
+$("btn-find").onclick = async () => {
+  $("settings-msg").textContent = "Searching the network for the comma…";
+  const r = await api("/api/discover", { method: "POST" });
+  $("settings-msg").textContent = r.message;
+  loadSettings();
+  loadChecks(true);
 };
 $("btn-test").onclick = async () => {
   $("settings-msg").textContent = "Testing…";

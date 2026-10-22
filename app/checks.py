@@ -44,14 +44,16 @@ def check_storage():
 
 def check_config():
     s = config.load()
-    if not s.comma_host:
-        return _res("config", "Comma address", "fail", "No comma address set.",
-                    "Enter the comma's IP address in Settings.")
     if not s.github_user:
-        return _res("config", "Comma address", "warn",
-                    f"Address set to {s.comma_host}, but no GitHub username set.",
+        return _res("config", "Settings", "warn",
+                    "No GitHub username set.",
                     "Enter your GitHub username in Settings to verify the SSH key.")
-    return _res("config", "Comma address", "ok", f"{s.comma_host}:{s.comma_port} as user '{s.comma_user}'.")
+    if s.comma_host:
+        return _res("config", "Settings", "ok",
+                    f"GitHub user '{s.github_user}'. Last comma address: {s.comma_host}"
+                    f" ({s.comma_found_via or 'saved'}). Auto-find is on.")
+    return _res("config", "Settings", "ok",
+                f"GitHub user '{s.github_user}'. The comma will be found automatically on the network.")
 
 
 def check_ffmpeg():
@@ -89,9 +91,8 @@ def check_comma_connection():
 
 
 def check_footage_path():
-    s = config.load()
-    if not comma.port_open(s.comma_host, s.comma_port) or not sshkeys.check_local()[0]:
-        return _res("footage", "Footage on comma", "skip", "Skipped — SSH connection not ready.")
+    if not sshkeys.check_local()[0]:
+        return _res("footage", "Footage on comma", "skip", "Skipped — SSH key not ready.")
     try:
         client = comma.connect()
     except Exception as e:  # noqa: BLE001 - surface any failure as a check result

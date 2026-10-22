@@ -76,7 +76,8 @@
   <section class="card">
     <div class="card-head"><h2>Settings</h2></div>
     <form id="settings">
-      <label>Comma IP / hostname <input name="comma_host" required></label>
+      <label>Comma address (optional — leave blank to auto-find) <input name="comma_host" placeholder="auto-find"></label>
+      <label>Networks to search (optional, e.g. 192.168.1.0/24) <input name="scan_subnets" placeholder="auto-detect"></label>
       <label>GitHub username <input name="github_user"></label>
       <label>SSH port <input name="comma_port" type="number" min="1" max="65535"></label>
       <label>Comma user <input name="comma_user"></label>
@@ -94,6 +95,7 @@
       <label class="check"><input type="checkbox" name="delete_raw_after_encode"> Delete raw chunks after encoding</label>
       <div class="actions">
         <button type="submit">Save settings</button>
+        <button type="button" id="btn-find" class="ghost">Find comma now</button>
         <button type="button" id="btn-test" class="ghost">Test comma connection</button>
       </div>
       <p id="settings-msg" class="muted"></p>
