@@ -1,4 +1,4 @@
-# Comma Footage Sync
+# Comma Auto Docker
 
 Pulls dashcam footage off a comma device over your local network and turns each drive
 into one stacked H.264 MP4 (road on top, wide and driver below, mic audio included).
