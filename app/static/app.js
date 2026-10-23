@@ -153,6 +153,15 @@ $("btn-copy").onclick = async () => {
   catch { $("pubkey").select(); }
 };
 $("btn-gen").onclick = async () => { await api("/api/key/generate", { method: "POST", body: "{}" }); loadKey(); loadChecks(true); };
+$("btn-import").onclick = async () => {
+  const key = $("import-key").value;
+  if (!key.trim()) { $("key-status").textContent = "Paste a private key first."; return; }
+  const r = await api("/api/key/import", { method: "POST", body: JSON.stringify({ private_key: key }) });
+  if (r.ok === false) { $("key-status").innerHTML = `<span class="pill fail">Import failed</span> ${esc(r.message)}`; return; }
+  $("import-key").value = "";
+  $("key-status").innerHTML = `<span class="pill ok">Key imported</span> Register this public key on GitHub if it isn't already there.`;
+  loadKey(); loadChecks(true);
+};
 $("btn-regen").onclick = async () => {
   if (!confirm("Replace the app's SSH key? You must re-register the new public key on GitHub.")) return;
   await api("/api/key/generate", { method: "POST", body: JSON.stringify({ overwrite: true }) });

@@ -193,7 +193,7 @@ Set these in the web UI, or as environment variables for defaults.
 ## Troubleshooting
 
 - **Repository not found when installing**: the image is private. Make the package public (Part 1, step 3).
-- **"Comma rejected the key"**: the key is not on the GitHub account, or the username on the comma does not match.
+- **"Found SSH at … but it rejected the app's key"**: the comma is found, but it doesn't trust this key. Either add the app's public key to your GitHub account (Part 3a), or use **Use an existing key** in the SSH key panel to import the key Comma Sync already uses. After adding the key, re-enter your GitHub username on the comma so it reloads your keys.
 - **"No comma found"**: the comma is off, on another network, or SSH is off on it. If Host Network is off, set **Networks to search**. Then click **Find comma now**.
 - **"Could not reach GitHub"**: the container has no internet access. Registration can't be verified, but the comma connection still works.
 - **Downloads keep dropping**: the comma may reboot on weak power. The app retries automatically. A high-current USB-C supply helps.

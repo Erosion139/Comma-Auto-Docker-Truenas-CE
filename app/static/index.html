@@ -66,6 +66,15 @@
     </p>
     <div id="key-status" class="key-status"></div>
     <textarea id="pubkey" readonly rows="3"></textarea>
+    <details class="import">
+      <summary>Use an existing key instead (for example, the key Comma Sync already uses)</summary>
+      <p class="muted">
+        Paste the full contents of your private key file, such as <code>~/.ssh/id_ed25519</code>.
+        It is saved only on this app's data folder. Use this only for a key you already trust.
+      </p>
+      <textarea id="import-key" rows="5" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+      <div class="actions"><button id="btn-import" class="ghost">Import key</button></div>
+    </details>
     <div class="actions">
       <button id="btn-copy" class="ghost">Copy public key</button>
       <button id="btn-gen" class="ghost">Generate key</button>

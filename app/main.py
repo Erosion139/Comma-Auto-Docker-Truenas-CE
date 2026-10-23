@@ -65,6 +65,18 @@ def api_key_generate():
     return api_key_get()
 
 
+@app.post("/api/key/import")
+def api_key_import():
+    """Use an existing private key instead of the generated one."""
+    text = (request.get_json(silent=True) or {}).get("private_key", "")
+    try:
+        sshkeys.import_private_key(text)
+    except RuntimeError as e:
+        return jsonify({"ok": False, "message": str(e)}), 400
+    checks.run_all(force=True)
+    return api_key_get()
+
+
 @app.post("/api/test-connection")
 def api_test_connection():
     ok, msg = comma.test_connection()

@@ -57,6 +57,36 @@ def generate(overwrite: bool = False) -> None:
         raise RuntimeError(f"Could not write SSH key: {e}") from e
 
 
+def import_private_key(text: str) -> str:
+    """Use an existing ed25519 key pair (for example the one Comma Sync already uses).
+
+    Returns the public key line. Raises RuntimeError if the text isn't a usable key.
+    """
+    from io import StringIO
+    body = (text or "").strip()
+    if not body:
+        raise RuntimeError("Paste the contents of the private key file.")
+    try:
+        key = paramiko.Ed25519Key.from_private_key(StringIO(body + "\n"))
+    except Exception as e:  # noqa: BLE001 - any parse failure gets the same message
+        raise RuntimeError(
+            "That isn't an ed25519 private key. Paste the whole file, including the "
+            "'-----BEGIN OPENSSH PRIVATE KEY-----' and '-----END OPENSSH PRIVATE KEY-----' lines. "
+            f"({e.__class__.__name__})") from e
+    pub_line = f"ssh-ed25519 {key.get_base64()} comma-sync-imported"
+    ensure_dir()
+    fd = os.open(PRIV, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(body + "\n")
+    with open(PUB, "w") as f:
+        f.write(pub_line + "\n")
+    os.chmod(PRIV, stat.S_IRUSR | stat.S_IWUSR)
+    ok, msg = check_local()
+    if not ok:
+        raise RuntimeError(msg)
+    return pub_line
+
+
 def public_key() -> str | None:
     """The public key line, or None if no key exists yet."""
     if not os.path.exists(PUB):

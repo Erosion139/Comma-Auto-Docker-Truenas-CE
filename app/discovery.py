@@ -124,43 +124,68 @@ def sweep(nets: list[ipaddress.IPv4Network], port: int) -> list[str]:
     return [h for h in results if h]
 
 
+last_report: list[dict] = []   # what the most recent search tried, and why each failed
+
+
 def find(verify, port: int, last_known: str = "", scan_subnets: str = "") -> tuple[str, str]:
     """Return (host, method) for the first candidate that passes verify(host).
 
+    verify(host) returns (ok: bool, reason: str). The reasons are kept in last_report
+    so a failure can say exactly what was wrong (for example, the key was rejected).
     Raises DiscoveryError when nothing matches.
     """
     with _lock:  # one search at a time (scheduler and UI can both ask)
         tried: set[str] = set()
+        report: list[dict] = []
 
         def attempt(host: str, method: str):
             if not host or host in tried:
                 return None
             tried.add(host)
             try:
-                ok = verify(host)
-            except Exception:  # noqa: BLE001 - a failing candidate is simply skipped
-                ok = False
+                ok, reason = verify(host)
+            except Exception as e:  # noqa: BLE001 - a failing candidate is skipped
+                ok, reason = False, f"error: {e}"
+            report.append({"host": host, "method": method, "ok": ok, "reason": reason})
             return (host, method) if ok else None
+
+        def finish(err: str):
+            last_report[:] = report
+            return DiscoveryError(err)
 
         if last_known:
             r = attempt(last_known, "last known address")
             if r:
+                last_report[:] = report
                 return r
 
-        for host in mdns_hosts():
+        mdns = mdns_hosts()
+        for host in mdns:
             r = attempt(host, "mDNS")
             if r:
+                last_report[:] = report
                 return r
 
         nets = local_networks(scan_subnets)
         if not nets:
-            raise DiscoveryError("Could not determine the local network to search. "
-                                 "Set 'Networks to search' in Settings (for example 192.168.1.0/24).")
+            raise finish("Could not determine the local network to search. "
+                         "Set 'Networks to search' in Settings (for example 192.168.1.0/24).")
         for host in sweep(nets, port):
             r = attempt(host, "subnet scan")
             if r:
+                last_report[:] = report
                 return r
 
         where = ", ".join(str(n) for n in nets)
-        raise DiscoveryError(f"No comma found (searched mDNS and {where}). "
-                             "Check that it is powered on, on the same network, and has SSH enabled.")
+        rejected = [x for x in report if not x["ok"] and "rejected" in x["reason"]]
+        if rejected:
+            hosts = ", ".join(x["host"] for x in rejected)
+            raise finish(
+                f"Found SSH at {hosts}, but it rejected the app's key. The comma only accepts keys "
+                "on your GitHub account. Add the app's public key to GitHub (or import the key "
+                "Comma Sync uses), then re-enter the GitHub username on the comma.")
+        if mdns:
+            raise finish("A comma was advertised on mDNS but did not respond to SSH. "
+                         "Check that SSH is enabled on the comma.")
+        raise finish(f"No comma found (searched mDNS and {where}). "
+                     "Check that it is powered on, on the same network, and has SSH enabled.")

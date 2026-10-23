@@ -10,6 +10,7 @@ Footage layout on the device (from the comma-sync project):
 import logging
 import re
 import socket
+import time
 from collections import defaultdict
 
 import paramiko
@@ -50,19 +51,36 @@ def _make_client(host: str, timeout: float = 10) -> paramiko.SSHClient:
     return client
 
 
-def _is_comma(host: str) -> bool:
-    """Accepts our key and has the openpilot install. Anything else returns False."""
+def _probe(host: str) -> tuple[bool, str]:
+    """One attempt: connect with the app key and check for openpilot."""
     try:
         client = _make_client(host, timeout=5)
-    except Exception:  # noqa: BLE001 - wrong device, auth refused, or no SSH
-        return False
+    except paramiko.AuthenticationException:
+        return False, "SSH answered but rejected the app's key"
+    except (paramiko.SSHException, OSError) as e:
+        return False, f"no usable SSH service ({e.__class__.__name__})"
     try:
-        _, out, _ = client.exec_command("test -d /data/openpilot && echo ok || echo no")
-        return out.read().decode().strip() == "ok"
-    except Exception:  # noqa: BLE001
-        return False
+        _, out, _ = client.exec_command("test -d /data/openpilot && echo ok || echo no", timeout=10)
+        if out.read().decode().strip() == "ok":
+            return True, "comma (openpilot found)"
+        return False, "SSH works but /data/openpilot is missing (not a comma)"
+    except Exception as e:  # noqa: BLE001
+        return False, f"command failed ({e.__class__.__name__})"
     finally:
         client.close()
+
+
+def _is_comma(host: str) -> tuple[bool, str]:
+    """Accepts our key and has the openpilot install. Returns (ok, reason).
+
+    A rejected key is final. Other failures get one retry, since a device that just
+    woke up or is under load can drop a single command.
+    """
+    ok, reason = _probe(host)
+    if ok or "rejected" in reason:
+        return ok, reason
+    time.sleep(1)
+    return _probe(host)
 
 
 def resolve_host(force: bool = False) -> str:
@@ -108,7 +126,7 @@ def test_connection() -> tuple[bool, str]:
     except (paramiko.SSHException, OSError) as e:
         return False, f"SSH to {host}:{s.comma_port} failed: {e}"
     try:
-        _, out, _ = client.exec_command("test -d /data/openpilot && echo ok || echo no")
+        _, out, _ = client.exec_command("test -d /data/openpilot && echo ok || echo no", timeout=10)
         if out.read().decode().strip() != "ok":
             return False, "Connected, but /data/openpilot not found — is this a comma device?"
         via = s.comma_found_via or "found"
