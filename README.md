@@ -159,6 +159,27 @@ The app scans on its own every `SCAN_INTERVAL_MIN` minutes (default 60).
 - **Transfer speed**: download speed from the comma, in MB/s.
 - **Network in / out**: total network throughput of the container's interfaces, in Mb/s.
 - **Encode queue**: drives waiting for or currently in the encoder.
+- **Encoding card**: a progress bar for the drive being encoded (footage done, speed as a multiple of
+  realtime, and ETA), a queue bar for the current batch (encoded out of total), and hardware markers.
+- **GPU card**: also shows the NVENC (encoder) and NVDEC (decoder) engine load when the driver reports it.
+
+### Reading the hardware markers
+
+Each marker is one plain-language check on the current render. It is shown live while a drive
+encodes, and the last finished render stays visible until the next one starts.
+
+| Marker | Green means | Amber means |
+|---|---|---|
+| **Encoder** | NVENC engine has been busy during this render | NVENC was selected, but the encoder engine stayed idle |
+| **Decoder** | NVDEC engine has been busy during this render | NVDEC was selected but idle, or it failed and fell back to CPU |
+| **ffmpeg CPU** | Load is within the thread limit | At 80% or more of the thread limit, or high CPU with both stages on the GPU |
+| **Speed** | At least 1× realtime (the queue keeps up) | Slower than realtime, so the queue will fall behind |
+
+A high **ffmpeg CPU** reading is expected when encoding or decoding runs on the CPU. The marker names
+which stage that is. If the GPU markers are green and CPU load is still high, that needs a closer look.
+
+The same numbers are written to the log after each render: encoder, decoder, GPU engine peaks, average
+and peak CPU, and speed.
 
 ## Output
 

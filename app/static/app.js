@@ -18,6 +18,12 @@ async function api(path, opts = {}) {
 }
 
 /* ---------- live status (1 s) ---------- */
+function meter(label, pct, valText, extra = "") {
+  const p = Math.max(0, Math.min(100, pct || 0));
+  return `<div class="meter"><div class="row"><span>${label}</span><span class="val">${valText}</span></div>
+    <div class="bar"><div class="fill ${extra}" style="width:${p}%"></div></div></div>`;
+}
+
 function renderGpu(g) {
   const box = $("gpu");
   if (!g || !g.available || !g.gpus.length) {
@@ -28,15 +34,76 @@ function renderGpu(g) {
     const memPct = x.mem_total_mb ? (x.mem_used_mb / x.mem_total_mb) * 100 : 0;
     const util = x.util_pct ?? 0;
     const temp = x.temp_c ?? 0;
+    const tempColor = temp >= 80 ? "var(--fail)" : temp >= 70 ? "var(--warn)" : "var(--accent)";
+    const engines = [];
+    if (x.enc_pct != null) engines.push(meter("Encoder engine (NVENC)", x.enc_pct, `${x.enc_pct.toFixed(0)}%`));
+    if (x.dec_pct != null) engines.push(meter("Decoder engine (NVDEC)", x.dec_pct, `${x.dec_pct.toFixed(0)}%`));
     return `
       <div class="gpu-name">${esc(x.name)} <span class="muted small">#${x.index}</span></div>
-      <div class="meter"><div class="row"><span>Utilization</span><span class="val">${util.toFixed(0)}%</span></div>
-        <div class="bar"><div class="fill" style="width:${util}%"></div></div></div>
-      <div class="meter"><div class="row"><span>VRAM</span><span class="val">${(x.mem_used_mb / 1024).toFixed(1)} / ${(x.mem_total_mb / 1024).toFixed(1)} GB</span></div>
-        <div class="bar"><div class="fill alt" style="width:${memPct}%"></div></div></div>
+      ${meter("Utilization", util, `${util.toFixed(0)}%`)}
+      ${meter("VRAM", memPct, `${(x.mem_used_mb / 1024).toFixed(1)} / ${(x.mem_total_mb / 1024).toFixed(1)} GB`, "alt")}
       <div class="meter"><div class="row"><span>Temperature</span><span class="val">${temp.toFixed(0)} °C</span></div>
-        <div class="bar"><div class="fill" style="width:${Math.min(temp, 100)}%;background:${temp >= 80 ? "var(--fail)" : temp >= 70 ? "var(--warn)" : "var(--accent)"}"></div></div></div>`;
+        <div class="bar"><div class="fill" style="width:${Math.min(temp, 100)}%;background:${tempColor}"></div></div></div>
+      ${engines.join("")}`;
   }).join("");
+}
+
+/* ---------- encoding: progress, queue, and hardware markers ---------- */
+function fmtClock(sec) {
+  if (sec == null || !isFinite(sec)) return "—";
+  const t = Math.floor(sec);
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = String(t % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
+function renderMarkers(view) {
+  if (!view) return `<span class="muted">Nothing has been encoded in this session yet.</span>`;
+  return view.markers.map((m) => `
+    <div class="marker ${esc(m.status)}">
+      <div class="m-label">${esc(m.label)}</div>
+      <div class="m-value">${esc(m.value)}</div>
+      <div class="m-detail">${esc(m.detail)}</div>
+    </div>`).join("");
+}
+
+function renderEncoding(s) {
+  const r = s.render;
+  const last = s.last_render;
+  const b = s.batch || { total: 0, done: 0, waiting: 0 };
+
+  // queue: drives encoded in this batch, out of the batch total
+  const qPct = b.total ? (b.done / b.total) * 100 : 0;
+  $("queue-bar").style.width = `${qPct}%`;
+  $("queue-label").textContent = b.total
+    ? `Queue: ${b.done} of ${b.total} encoded · ${b.waiting} waiting`
+    : "Queue empty";
+  $("queue-pct").textContent = b.total ? `${qPct.toFixed(0)}%` : "";
+
+  // current drive
+  $("render-state").textContent = r ? "encoding" : "idle";
+  $("render-state").className = r ? "pill ok" : "pill";
+  if (r) {
+    const p = r.pct || 0;
+    $("enc-label").textContent = `Encoding ${r.stamp}`;
+    $("enc-pct").textContent = `${p.toFixed(1)}%`;
+    $("enc-bar").style.width = `${p}%`;
+    const speed = r.speed != null ? `${r.speed.toFixed(2)}× realtime` : "measuring…";
+    $("enc-detail").textContent = `${fmtClock(r.out_sec)} of ${fmtClock(r.dur)} · ${speed}`;
+    $("enc-eta").textContent = r.eta != null ? `ETA ${fmtClock(r.eta)}` : "";
+  } else {
+    $("enc-label").textContent = b.waiting > 0 ? "Next drive queued…" : "Idle";
+    $("enc-pct").textContent = "";
+    $("enc-bar").style.width = "0%";
+    $("enc-detail").textContent = "—";
+    $("enc-eta").textContent = "";
+  }
+
+  // hardware and speed markers: live, or the last finished render
+  const view = r || last;
+  $("markers-title").textContent = r
+    ? "Hardware and speed (live)"
+    : last ? `Hardware and speed (last render: ${last.stamp})` : "Hardware and speed";
+  $("markers").innerHTML = renderMarkers(view);
 }
 
 function stateLabel(s) { return `<span class="state ${esc(s)}">${esc(s)}</span>`; }
@@ -80,6 +147,7 @@ function renderStatus(s) {
   $("queue").textContent = s.encode_queue + (s.encoding_route ? " + 1 encoding" : "");
 
   renderDrives(s.drives);
+  renderEncoding(s);
   renderGpu(s.gpu);
 
   const logEl = $("log");

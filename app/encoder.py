@@ -21,6 +21,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
 
 SEGMENT_SECS = 60  # openpilot segments are one minute each
@@ -254,6 +256,7 @@ def _build_render_args(cams, audio, out, fps, encoder_args, threads, hw, nice_le
     args = _nice(["ffmpeg"], nice_level)
     # warnings are shown only when NVDEC is requested, so a silent CPU fallback can be detected
     args += ["-y", "-hide_banner", "-loglevel", "warning" if hw else "error",
+             "-nostats", "-progress", "pipe:1", "-stats_period", "1",
              "-filter_threads", str(max(1, threads)), "-threads", str(max(1, threads))]
 
     native = layout["mode"] == "native"
@@ -306,9 +309,92 @@ def _build_render_args(cams, audio, out, fps, encoder_args, threads, hw, nice_le
     return args
 
 
+class CpuSampler:
+    """CPU use of one process (all its threads), as a percentage of one core, from /proc."""
+
+    def __init__(self, pid: int):
+        self.pid = pid
+        self.prev = None  # (cpu_seconds, monotonic_time)
+
+    def _cpu_seconds(self):
+        try:
+            with open(f"/proc/{self.pid}/stat") as f:
+                # fields after the ")" of the command name; utime and stime are fields 14 and 15
+                parts = f.read().rsplit(")", 1)[1].split()
+            return (int(parts[11]) + int(parts[12])) / os.sysconf("SC_CLK_TCK")
+        except (OSError, ValueError, IndexError):
+            return None
+
+    def sample(self):
+        cpu = self._cpu_seconds()
+        now = time.monotonic()
+        if cpu is None:
+            return None
+        pct = None
+        if self.prev and now > self.prev[1]:
+            pct = (cpu - self.prev[0]) / (now - self.prev[1]) * 100
+        self.prev = (cpu, now)
+        return pct
+
+
+def _progress_snapshot(info: dict, dur: float) -> dict:
+    """Turn ffmpeg's -progress key=value block into numbers the UI can show."""
+    def num(key, cast=float):
+        try:
+            return cast(info[key])
+        except (KeyError, ValueError, TypeError):
+            return None
+
+    out_us = num("out_time_us", int)
+    out_sec = out_us / 1e6 if out_us is not None and out_us >= 0 else None
+    speed_raw = info.get("speed", "").strip().rstrip("x")
+    try:
+        speed = float(speed_raw) if speed_raw else None
+    except ValueError:  # "N/A" at the start of a render
+        speed = None
+    ended = info.get("progress") == "end"
+    pct = min(100.0, out_sec / dur * 100) if (out_sec is not None and dur > 0) else 0.0
+    if ended:
+        pct = 100.0
+    eta = (dur - out_sec) / speed if (speed and speed > 0 and out_sec is not None and not ended) else None
+    return {"pct": round(pct, 1), "out_sec": out_sec, "dur": dur, "fps": num("fps"),
+            "speed": speed, "eta": eta, "frame": num("frame", int), "ended": ended}
+
+
+def _run_render(args: list[str], dur: float, on_progress=None, timeout: float = 60 * 60 * 6):
+    """Run ffmpeg, reporting progress as it goes. Returns (returncode, stderr_text)."""
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    err_parts = []
+    reader = threading.Thread(target=lambda: err_parts.append(proc.stderr.read()), daemon=True)
+    reader.start()
+    timer = threading.Timer(timeout, proc.kill)
+    timer.start()
+    cpu = CpuSampler(proc.pid)
+    info = {}
+    try:
+        for raw in proc.stdout:
+            line = raw.strip()
+            if "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            info[key] = val
+            if key == "progress" and on_progress:
+                snap = _progress_snapshot(info, dur)
+                snap["cpu_pct"] = cpu.sample()
+                try:
+                    on_progress(snap)
+                except Exception:  # noqa: BLE001 - a UI problem must never stop the render
+                    pass
+    finally:
+        timer.cancel()
+    rc = proc.wait()
+    reader.join(timeout=10)
+    return rc, "".join(err_parts)
+
+
 def render_stacked(cams: dict, audio: str | None, out: str, fps: int, encoder_args: list[str],
-                   layout: dict, threads: int = 2, hw_decode: bool = False, nice_level: int = 10
-                   ) -> tuple[bool, str, str]:
+                   layout: dict, threads: int = 2, hw_decode: bool = False, nice_level: int = 10,
+                   on_progress=None) -> tuple[bool, str, str]:
     """Stack the three cameras into one MP4 using a layout from plan_layout().
 
     cams: {"road": path|None, "wide": path|None, "driver": path|None}
@@ -329,15 +415,17 @@ def render_stacked(cams: dict, audio: str | None, out: str, fps: int, encoder_ar
 
     def attempt(hw: bool):
         args = _build_render_args(cams, audio, out, fps, encoder_args, threads, hw, nice_level, dur, layout)
-        r = _run(args, timeout=60 * 60 * 6)
-        if r.returncode == 0 and os.path.exists(part) and os.path.getsize(part) > 0:
+        rc, err = _run_render(args, dur, on_progress)
+        if rc == 0 and os.path.exists(part) and os.path.getsize(part) > 0:
             os.replace(part, out)
             # ffmpeg quietly decodes on the CPU when the GPU decoder can't start
-            fell_back = hw and "cuda" in r.stderr.lower() and "fail" in r.stderr.lower()
+            fell_back = hw and "cuda" in err.lower() and "fail" in err.lower()
+            if fell_back and on_progress:
+                on_progress({"event": "decode_fallback"})
             return True, "ok", fell_back
         if os.path.exists(part):
             os.remove(part)
-        lines = [ln.strip() for ln in r.stderr.strip().splitlines() if ln.strip()]
+        lines = [ln.strip() for ln in err.strip().splitlines() if ln.strip()]
         gpu = [ln for ln in lines if any(k in ln.lower() for k in ("cuda", "device", "hwaccel", "nvdec"))]
         pick = (gpu or lines or ["ffmpeg failed"])[0] if hw else (lines or ["ffmpeg failed"])[-1]
         return False, pick[:240], False
@@ -348,6 +436,8 @@ def render_stacked(cams: dict, audio: str | None, out: str, fps: int, encoder_ar
     if ok:
         return True, msg, ("nvdec" if hw_decode else "cpu")
     if hw_decode:
+        if on_progress:
+            on_progress({"event": "decode_fallback"})
         ok2, msg2, _ = attempt(False)
         if ok2:
             return True, "NVDEC failed (" + msg[:160] + "), decoded on the CPU instead.", "cpu"

@@ -75,6 +75,17 @@ td.num { font-variant-numeric: tabular-nums; }
 .mini { width: 120px; height: 8px; background: var(--bar); border-radius: 999px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
 .mini > i { display: block; height: 100%; background: var(--accent); }
 
+.markers { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.marker { border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.marker.ok { border-left-color: var(--ok); }
+.marker.warn { border-left-color: var(--warn); }
+.marker.info { border-left-color: var(--accent); }
+.m-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.m-value { font-size: 17px; font-weight: 700; margin: 2px 0 4px; font-variant-numeric: tabular-nums; }
+.marker.ok .m-value { color: var(--ok); }
+.marker.warn .m-value { color: var(--warn); }
+.m-detail { font-size: 13px; color: var(--muted); }
+
 textarea { width: 100%; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); resize: vertical; }
 .key-status { margin-bottom: 8px; font-size: 14px; }
 form { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px 14px; }
