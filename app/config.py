@@ -21,7 +21,16 @@ class Settings:
     scan_interval_min: int = int(os.environ.get("SCAN_INTERVAL_MIN", "60"))
     min_age_secs: int = int(os.environ.get("MIN_AGE_SECS", "120"))  # skip drives still recording
     encoder: str = os.environ.get("ENCODER", "auto")            # auto | nvenc | cpu
+    decoder: str = os.environ.get("DECODER", "auto")            # auto | nvdec | cpu
+    encode_threads: int = int(os.environ.get("ENCODE_THREADS", "2"))  # CPU threads for encoding/decoding
+    encode_nice: int = int(os.environ.get("ENCODE_NICE", "10"))       # 0 = normal priority; 1-19 = lower
     fps: int = int(os.environ.get("FPS", "20"))
+    # Output quality
+    resolution_mode: str = os.environ.get("RESOLUTION_MODE", "native")  # native (1:1 pixels) | 1080 (scaled)
+    video_quality: int = int(os.environ.get("VIDEO_QUALITY", "20"))     # CRF/CQ: lower = better, larger (10-35)
+    encode_preset: str = os.environ.get("ENCODE_PRESET", "balanced")    # speed | balanced | quality
+    max_bitrate_mbps: float = float(os.environ.get("MAX_BITRATE_MBPS", "0"))  # 0 = no cap
+    audio_kbps: int = int(os.environ.get("AUDIO_KBPS", "128"))          # mic audio bitrate (64-320)
     delete_raw_after_encode: bool = os.environ.get("CLEAN_RAW", "0") == "1"
     webui_port: int = int(os.environ.get("WEBUI_PORT", "8080"))
 

@@ -122,7 +122,9 @@ async function loadKey() {
 
 /* ---------- settings ---------- */
 const FIELDS = ["comma_host", "scan_subnets", "github_user", "comma_port", "comma_user", "output_dir",
-  "min_free_gb", "scan_interval_min", "min_age_secs", "encoder", "delete_raw_after_encode"];
+  "min_free_gb", "scan_interval_min", "min_age_secs", "encoder", "decoder",
+  "encode_threads", "encode_nice", "resolution_mode", "video_quality", "encode_preset",
+  "max_bitrate_mbps", "audio_kbps", "delete_raw_after_encode"];
 async function loadSettings() {
   const s = await api("/api/settings");
   const f = $("settings");

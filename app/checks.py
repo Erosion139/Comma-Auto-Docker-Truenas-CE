@@ -130,9 +130,24 @@ def check_encoder():
                 "Optional: enable GPU passthrough for faster encoding.")
 
 
+def check_decoder():
+    s = config.load()
+    if s.decoder == "cpu":
+        return _res("decoder", "Video decoder", "ok",
+                    "Set to CPU decoding in Settings. This uses more CPU; NVDEC is faster if you have an NVIDIA GPU.")
+    ok, msg = encoder.nvdec_works()
+    if ok:
+        return _res("decoder", "Video decoder", "ok", msg + " Decoding runs on the GPU.")
+    if s.decoder == "nvdec":
+        return _res("decoder", "Video decoder", "fail", msg,
+                    "NVDEC is forced but unavailable — check GPU passthrough and the 'video' driver capability.")
+    return _res("decoder", "Video decoder", "warn", msg + " Falling back to CPU decoding, which is slow.",
+                "Optional: enable GPU passthrough with the video capability for NVDEC.")
+
+
 CHECKS = [
     check_config, check_storage, check_ffmpeg, check_ssh_key_local,
-    check_github, check_comma_connection, check_footage_path, check_gpu, check_encoder,
+    check_github, check_comma_connection, check_footage_path, check_gpu, check_encoder, check_decoder,
 ]
 
 

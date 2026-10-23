@@ -168,8 +168,30 @@ Each drive gets a folder named by its recording start time:
 <output>/2026-10-22_14-03-11/2026-10-22_14-03-11__stacked.mp4
 ```
 
-The video is H.264 at 1280×1080: the road camera across the top (1280×720) and the wide and
-driver cameras side by side below (640×360 each). Mic audio is aligned to each one-minute segment.
+The video is H.264 with the road camera across the top and the wide and driver cameras side by side
+below. The default layout keeps every camera at its full sensor resolution (see *Output quality*).
+Mic audio is aligned to each one-minute segment.
+
+## Output quality
+
+Set these in **Settings → Output quality**, or as environment variables for defaults.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| **Layout** (`RESOLUTION_MODE`) | `native` | `native` keeps each camera at its own resolution with no scaling, so every pixel maps 1:1. With the current cameras the canvas is **3272×2416**. `1080` scales everything into a fixed **1280×1080** frame (smaller and faster, but pixels are resampled). |
+| **Video quality** (`VIDEO_QUALITY`) | `20` | CRF (CPU) or CQ (GPU) on a 10–35 scale. Lower is sharper and larger. About 18–22 is visually transparent for most footage. Each +6 roughly halves the file size. |
+| **Encode preset** (`ENCODE_PRESET`) | `balanced` | `speed`, `balanced`, or `quality`. Slower presets give a smaller file at the same quality, but take more CPU or GPU time. |
+| **Max bitrate** (`MAX_BITRATE_MBPS`) | `0` | `0` means no cap. Set a value such as `6` in Mb/s to keep file sizes predictable. |
+| **Audio bitrate** (`AUDIO_KBPS`) | `128` | Bitrate of the mic audio, 64–320 kb/s. |
+
+Trade-offs to keep in mind:
+
+- **Native layout is much heavier.** A 3272×2416 frame has about 4.5× the pixels of the 1280×1080
+  layout, so it needs more storage, more encode time, and more memory for the decoder. The file
+  for one drive is several times larger. With NVENC and NVDEC working, native is comfortable. On
+  CPU-only encoding, use `speed` or `1080` if renders take too long.
+- Native mode keeps the original detail, so each camera stays as crisp as the recording. That is
+  the right choice if you want to review footage closely or crop into it later.
 
 ## Settings reference
 
@@ -187,8 +209,37 @@ Set these in the web UI, or as environment variables for defaults.
 | `SCAN_INTERVAL_MIN` | `60` | Minutes between automatic scans |
 | `MIN_AGE_SECS` | `120` | Skip drives whose latest segment is newer than this (still recording) |
 | `ENCODER` | `auto` | `auto` (GPU if it works), `nvenc` (GPU only), or `cpu` |
+| `DECODER` | `auto` | `auto` (decode on the GPU with NVDEC if it works), `nvdec`, or `cpu` |
+| `ENCODE_THREADS` | `2` | CPU threads the encoder may use. Lower this if the UI becomes slow. |
+| `ENCODE_NICE` | `10` | Scheduling priority of encoding (0 = normal, up to 19). Higher keeps the UI responsive. |
 | `FPS` | `20` | Frame rate of the recorded footage |
+| `RESOLUTION_MODE` | `native` | `native` (1:1 camera pixels) or `1080` (scaled 1280×1080). See *Output quality*. |
+| `VIDEO_QUALITY` | `20` | CRF/CQ, 10–35. Lower is better and larger. |
+| `ENCODE_PRESET` | `balanced` | `speed`, `balanced`, or `quality` |
+| `MAX_BITRATE_MBPS` | `0` | Cap on video bitrate in Mb/s. `0` = no cap. |
+| `AUDIO_KBPS` | `128` | Mic audio bitrate in kb/s (64–320) |
 | `CLEAN_RAW` | `0` | `1` = delete the downloaded raw chunks after a drive is encoded |
+
+## Performance on a modest CPU
+
+Rendering is the heavy part. Decoding three HEVC cameras and encoding H.264 can use every core
+the app is allowed to use, which makes the web UI slow to respond. Three settings control this:
+
+1. **Decoder: auto (NVDEC).** With an NVIDIA GPU, the HEVC camera streams are decoded on the
+   GPU. This removes most of the CPU load. It needs the GPU passed through with the **video**
+   capability (the install steps already set `NVIDIA_DRIVER_CAPABILITIES` to `compute,utility,video`).
+   The Setup checks show **Video decoder** as green when NVDEC works.
+2. **CPU threads: 2 (default).** The encoder uses at most this many cores at a time. Set it to
+   `1` on a slow CPU. Renders take longer, but the rest of the system stays responsive.
+3. **Encoder priority: 10 (default).** Encoding runs at lower priority than the web UI, so the
+   UI stays responsive even during a render.
+
+You can also cap the whole container in TrueNAS: in the Custom App wizard, use
+**Resources Configuration → Enable Resource Limits → CPUs** (for example `2`). That is a hard limit on
+everything the app does, including downloads. Use it as a backstop if the settings above aren't enough.
+
+With NVENC and NVDEC both working, most of the work moves to the GPU. Check the log after a render:
+it shows which encoder and decoder were used, and says when NVDEC could not start and the app fell back to the CPU.
 
 ## Troubleshooting
 

@@ -101,6 +101,31 @@
           <option value="cpu">CPU only (libx264)</option>
         </select>
       </label>
+      <label>Decoder
+        <select name="decoder">
+          <option value="auto">Auto (GPU decode if it works)</option>
+          <option value="nvdec">GPU only (NVDEC)</option>
+          <option value="cpu">CPU only (slow)</option>
+        </select>
+      </label>
+      <label>CPU threads for encoding <input name="encode_threads" type="number" min="1" max="64"></label>
+      <label>Encoder priority (nice 0–19; higher = leaves more CPU for the UI) <input name="encode_nice" type="number" min="0" max="19"></label>
+      <label>Layout
+        <select name="resolution_mode">
+          <option value="native">Native 1:1 pixels (each camera at full resolution)</option>
+          <option value="1080">Scaled 1280×1080 (smaller files, faster)</option>
+        </select>
+      </label>
+      <label>Video quality (CRF / CQ, 10–35; lower = better and larger) <input name="video_quality" type="number" min="10" max="35"></label>
+      <label>Encode preset
+        <select name="encode_preset">
+          <option value="speed">Speed (fastest, larger files)</option>
+          <option value="balanced">Balanced</option>
+          <option value="quality">Quality (slowest, smallest for the quality)</option>
+        </select>
+      </label>
+      <label>Max bitrate in Mb/s (0 = no cap) <input name="max_bitrate_mbps" type="number" step="0.5" min="0"></label>
+      <label>Audio bitrate (kb/s, 64–320) <input name="audio_kbps" type="number" min="64" max="320"></label>
       <label class="check"><input type="checkbox" name="delete_raw_after_encode"> Delete raw chunks after encoding</label>
       <div class="actions">
         <button type="submit">Save settings</button>

@@ -324,23 +324,40 @@ class Pipeline:
         audio = None
         qparts = [os.path.join(local_root, sd, "qcamera.ts") for sd in segdirs]
         audio_path = os.path.join(work, "audio.m4a")
-        if encoder.build_audio(qparts, audio_path):
+        if encoder.build_audio(qparts, audio_path, kbps=max(64, min(int(s.audio_kbps), 320))):
             audio = audio_path
         else:
             self.log(f"No mic audio for {stamp}; rendering video only.")
 
-        label, enc_args = encoder.resolve_encoder(s.encoder)
+        quality = encoder.Quality(
+            video_quality=s.video_quality, preset=s.encode_preset,
+            max_bitrate_mbps=s.max_bitrate_mbps, audio_kbps=s.audio_kbps,
+        ).clamped()
+        layout = encoder.plan_layout(cams, s.resolution_mode)
+        label, enc_args = encoder.resolve_encoder(s.encoder, threads=s.encode_threads, quality=quality)
+        use_nvdec, _ = encoder.resolve_decoder(s.decoder)
         self.encoder_label = label
+        self.log(f"Layout: {layout['desc']}.")
+        cap = f", cap {quality.max_bitrate_mbps:g} Mb/s" if quality.max_bitrate_mbps > 0 else ""
+        self.log(f"Rendering with {label}, decode {'nvdec' if use_nvdec else 'cpu'}, "
+                 f"quality {quality.video_quality} ({quality.preset}){cap}, "
+                 f"{s.encode_threads} CPU thread(s), priority nice {s.encode_nice}.")
 
         out_dir = os.path.join(s.output_dir, stamp)
         os.makedirs(out_dir, exist_ok=True)
         out = os.path.join(out_dir, f"{stamp}__stacked.mp4")
-        ok, msg = encoder.render_stacked(cams, audio, out, s.fps, enc_args)
+        ok, msg, decode_used = encoder.render_stacked(
+            cams, audio, out, s.fps, enc_args, layout,
+            threads=s.encode_threads, hw_decode=use_nvdec, nice_level=s.encode_nice,
+        )
         shutil.rmtree(work, ignore_errors=True)
 
         if not ok:
             self._mark_failed(route, f"render failed: {msg}")
             return
+        if msg != "ok":
+            self.log(f"Note for {stamp}: {msg}")
+        self.log(f"Decoded with {decode_used}.")
 
         rec["state"] = "done"
         rec["out"] = out
