@@ -84,7 +84,8 @@ function renderEncoding(s) {
   $("render-state").className = r ? "pill ok" : "pill";
   if (r) {
     const p = r.pct || 0;
-    $("enc-label").textContent = `Encoding ${r.stamp}`;
+    $("enc-label").textContent = `Encoding ${r.stamp}` +
+      (r.outputs_total > 1 ? ` · ${r.combo_label} (${r.output_index + 1} of ${r.outputs_total})` : "");
     $("enc-pct").textContent = `${p.toFixed(1)}%`;
     $("enc-bar").style.width = `${p}%`;
     const speed = r.speed != null ? `${r.speed.toFixed(2)}× realtime` : "measuring…";
@@ -201,6 +202,7 @@ async function loadSettings() {
     if (!el) continue;
     if (el.type === "checkbox") el.checked = !!s[k]; else el.value = s[k];
   }
+  applyOutputs(s.outputs);
 }
 $("settings").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -213,6 +215,77 @@ $("settings").addEventListener("submit", async (e) => {
   $("settings-msg").textContent = "Saved.";
   loadChecks(true);
 });
+
+/* ---------- videos per drive (which camera combinations to render) ---------- */
+const COMBOS = [["road"], ["wide"], ["driver"], ["road", "wide"], ["road", "driver"], ["wide", "driver"],
+  ["road", "wide", "driver"]];
+const CAM_NAME = { road: "Road", wide: "Wide", driver: "Driver" };
+const CAM_COLOR = { road: "#60a5fa", wide: "#34d399", driver: "#f59e0b" };
+
+function comboTitle(c) {
+  return c.length === 3 ? "All three (stacked)" : c.map((k) => CAM_NAME[k]).join(" + ");
+}
+
+// a small picture of how the chosen cameras sit in the video: road on top, wide and driver below
+function glyph(c) {
+  const road = c.includes("road");
+  const bottom = ["wide", "driver"].filter((k) => c.includes(k));
+  const rows = road && bottom.length ? 2 : 1;
+  const cells = [];
+  if (road) cells.push(`<i style="grid-row:1;grid-column:1 / -1;background:${CAM_COLOR.road}"></i>`);
+  for (const k of bottom) {
+    const row = road ? 2 : 1;
+    const col = k === "wide" ? 1 : 2;
+    cells.push(`<i style="grid-row:${row};grid-column:${col};background:${CAM_COLOR[k]}"></i>`);
+  }
+  return `<span class="glyph" style="grid-template-rows:repeat(${rows},1fr)" aria-hidden="true">${cells.join("")}</span>`;
+}
+
+function buildCombos() {
+  $("combo-list").innerHTML = COMBOS.map((c) => {
+    const note = c.length === 1 ? "one camera" : c.length === 2 ? "two cameras" : "all three in one video";
+    return `<label class="combo">
+      <input type="checkbox" name="out_combo" value="${c.join("+")}">
+      ${glyph(c)}
+      <span class="combo-text"><b>${esc(comboTitle(c))}</b><span class="muted small">${note}</span></span>
+    </label>`;
+  }).join("");
+  $("combo-list").addEventListener("change", saveOutputs);
+}
+
+function pickedOutputs() {
+  return [...document.querySelectorAll('input[name="out_combo"]:checked')].map((cb) => cb.value);
+}
+
+function updateOutCount() {
+  const n = pickedOutputs().length;
+  const pill = $("out-count");
+  pill.textContent = n ? `${n} video${n > 1 ? "s" : ""} per drive` : "none selected";
+  pill.className = n ? "pill ok" : "pill warn";
+}
+
+function applyOutputs(text) {
+  const chosen = new Set(String(text || "").split(",").map((x) => x.trim()).filter(Boolean));
+  for (const cb of document.querySelectorAll('input[name="out_combo"]')) cb.checked = chosen.has(cb.value);
+  updateOutCount();
+}
+
+let outTimer = null;
+function saveOutputs() {
+  const picked = pickedOutputs();
+  updateOutCount();
+  clearTimeout(outTimer);
+  if (!picked.length) {
+    $("out-msg").textContent = "Pick at least one video. Nothing changes until you do.";
+    return;
+  }
+  $("out-msg").textContent = "Saving…";
+  outTimer = setTimeout(async () => {
+    await api("/api/settings", { method: "POST", body: JSON.stringify({ outputs: picked.join(",") }) });
+    $("out-msg").textContent = `Saved. Each drive will produce ${picked.length} video${picked.length > 1 ? "s" : ""}.`;
+    loadChecks(true);
+  }, 400);
+}
 
 /* ---------- buttons ---------- */
 $("btn-sync").onclick = () => api("/api/sync", { method: "POST" });
@@ -252,6 +325,7 @@ $("btn-test").onclick = async () => {
 };
 
 /* ---------- start ---------- */
+buildCombos();
 loadSettings();
 loadKey();
 loadChecks();

@@ -1,15 +1,22 @@
 """ffmpeg work: encoder/decoder detection, raw-HEVC concatenation, audio alignment, stacked render.
 
-Two layouts (chosen by resolution_mode):
+Outputs
+  Each drive can produce several videos, one per selected camera combination: the three single
+  cameras, the three pairs, and the three-camera stack (7 possible outputs). Every output is its own
+  ffmpeg run, with its own layout, from the same concatenated raw footage.
+
+Layouts (chosen by resolution_mode, applied to whatever cameras a combination contains)
 
   native (default, 1:1 pixels)
-      Every camera keeps its sensor resolution. Nothing is scaled. Road is centred on top,
-      wide and driver sit side by side below. The canvas is sized to fit, e.g. 3272x2416
-      for 1928x1208 + 1928x1208 + 1344x760 cameras.
+      Every camera keeps its sensor resolution. Nothing is scaled. The three-camera stack puts road
+      centred on top, with wide and driver side by side below. Pairs and singles use the same
+      arrangement with the missing cameras left out. e.g. the full stack is 3272x2416 for
+      1928x1208 + 1928x1208 + 1344x760 cameras.
 
   1080 (scaled)
-      Fixed 1280x1080 canvas: road 1280x720 on top, wide and driver 640x360 below.
-      Each camera is downscaled, so pixels are not 1:1.
+      The full stack keeps its fixed 1280x1080 layout (road 1280x720 on top, wide and driver
+      640x360 below). Other combinations use the same arrangement as native, scaled to fit inside
+      1280x1080 while keeping each camera's shape.
 
 Performance notes:
   * Decoding is the biggest CPU cost. With NVDEC (decoder=nvdec/auto) the HEVC streams are
@@ -17,6 +24,7 @@ Performance notes:
   * Encoding uses NVENC when available, otherwise libx264 with a fixed thread count.
   * ffmpeg runs under `nice`, so the web UI stays responsive while a render is busy.
 """
+import itertools
 import os
 import shutil
 import subprocess
@@ -26,12 +34,16 @@ import time
 from dataclasses import dataclass
 
 SEGMENT_SECS = 60  # openpilot segments are one minute each
-OUT_W, OUT_H = 1280, 1080          # 1080 (scaled) layout
+OUT_W, OUT_H = 1280, 1080          # 1080 (scaled) canvas
 TOP_H = 720
 BOT_W, BOT_H = 640, 360
 LABELS = ("road", "wide", "driver")
-# Used only to size a black placeholder when a camera file is missing.
+# Used only to size the layout when a camera's header can't be read.
 DEFAULT_SIZES = {"road": (1928, 1208), "wide": (1928, 1208), "driver": (1344, 760)}
+
+# every non-empty combination of the three cameras, singles first, the full stack last
+COMBOS = [c for n in (1, 2, 3) for c in itertools.combinations(LABELS, n)]
+DEFAULT_OUTPUTS = [("road", "wide", "driver")]
 
 PRESET_X264 = {"speed": "veryfast", "balanced": "medium", "quality": "slow"}
 PRESET_NVENC = {"speed": "p3", "balanced": "p5", "quality": "p7"}
@@ -52,6 +64,32 @@ class Quality:
             max_bitrate_mbps=max(float(self.max_bitrate_mbps), 0.0),
             audio_kbps=min(max(int(self.audio_kbps), 64), 320),
         )
+
+
+# ----- output selection -----------------------------------------------------------
+def combo_name(combo: tuple) -> str:
+    """File-name part for an output: 'stacked' for all three, otherwise e.g. 'road-wide'."""
+    return "stacked" if len(combo) == len(LABELS) else "-".join(combo)
+
+
+def combo_label(combo: tuple) -> str:
+    if len(combo) == len(LABELS):
+        return "All three (stacked)"
+    return " + ".join(c.capitalize() for c in combo)
+
+
+def parse_outputs(text: str) -> list[tuple]:
+    """Parse 'road+wide+driver,road,driver' into canonical combinations, in COMBOS order.
+
+    Unknown names are ignored. An empty or invalid value falls back to the three-camera stack.
+    """
+    wanted = set()
+    for part in (text or "").replace(" ", "").split(","):
+        names = {n for n in part.split("+") if n in LABELS}
+        if names:
+            wanted.add(tuple(c for c in LABELS if c in names))
+    combos = [c for c in COMBOS if c in wanted]
+    return combos or list(DEFAULT_OUTPUTS)
 
 
 def _run(args, timeout=None):
@@ -218,38 +256,78 @@ def _even(n: int) -> int:
     return n - (n % 2)
 
 
-def plan_layout(cams: dict, resolution_mode: str) -> dict:
-    """Work out the canvas and where each camera goes.
+# ----- layout ---------------------------------------------------------------------
+def _native_composition(sizes: dict, order: list[str]) -> tuple[int, int, dict]:
+    """Canvas size and camera positions at native resolution.
 
-    native: every camera at its own resolution, positions on even pixel boundaries.
-    1080:   the fixed scaled layout.
+    With road present: road centred on top, the remaining cameras side by side centred below.
+    Without road: the cameras side by side, top-aligned.
     """
-    sizes = {}
-    for lbl in LABELS:
-        p = cams.get(lbl)
-        sizes[lbl] = probe_size(p) if p and os.path.exists(p) else None
-    for lbl in LABELS:
-        if sizes[lbl] is None:
-            sizes[lbl] = DEFAULT_SIZES[lbl]  # placeholder black pane at a sensible size
+    pos = {}
+    bottom = [c for c in ("wide", "driver") if c in order]
+    if "road" in order:
+        rw, rh = sizes["road"]
+        bw = sum(sizes[c][0] for c in bottom)
+        bh = max((sizes[c][1] for c in bottom), default=0)
+        W = max(rw, bw) if bottom else rw
+        H = rh + bh if bottom else rh
+        pos["road"] = (_even((W - rw) // 2), 0)
+        x = _even((W - bw) // 2)
+        for c in bottom:
+            pos[c] = (x, rh)
+            x += sizes[c][0]
+    else:
+        W = sum(sizes[c][0] for c in order)
+        H = max(sizes[c][1] for c in order)
+        x = 0
+        for c in order:
+            pos[c] = (x, 0)
+            x += sizes[c][0]
+    return _even(W), _even(H), pos
 
-    if resolution_mode != "native":
-        return {"mode": "1080", "canvas": (OUT_W, OUT_H), "sizes": sizes, "pos": None,
-                "desc": f"scaled {OUT_W}x{OUT_H} (pixels resampled)"}
 
-    rw, rh = sizes["road"]
-    ww, wh = sizes["wide"]
-    dw, dh = sizes["driver"]
-    bottom_w = ww + dw
-    bottom_h = max(wh, dh)
-    W = _even(max(rw, bottom_w))
-    H = _even(rh + bottom_h)
-    pos = {
-        "road": (_even((W - rw) // 2), 0),
-        "wide": (_even((W - bottom_w) // 2), rh),
+def plan_layout(cams: dict, resolution_mode: str) -> dict:
+    """Work out the canvas and where each camera goes, for whichever cameras are present.
+
+    cams: {"road": path|None, "wide": path|None, "driver": path|None}. Missing or None entries
+    are left out of the layout, so a pair or single camera gets its own, smaller canvas.
+
+    Returns {"mode", "canvas": (w, h), "order": [labels], "items": {label: {pos, box, fit}}, "desc"}.
+    `fit` False means the camera is placed at its native size; True means it is scaled into `box`.
+    """
+    order = [lbl for lbl in LABELS if cams.get(lbl) and os.path.exists(cams[lbl])]
+    if not order:
+        raise ValueError("no camera footage for this output")
+    sizes = {lbl: probe_size(cams[lbl]) or DEFAULT_SIZES[lbl] for lbl in order}
+
+    # the full stack keeps its fixed scaled layout, exactly as before
+    if resolution_mode != "native" and len(order) == len(LABELS):
+        items = {
+            "road": {"pos": (0, 0), "box": (OUT_W, TOP_H), "fit": True},
+            "wide": {"pos": (0, TOP_H), "box": (BOT_W, BOT_H), "fit": True},
+            "driver": {"pos": (BOT_W, TOP_H), "box": (BOT_W, BOT_H), "fit": True},
+        }
+        return {"mode": "1080", "canvas": (OUT_W, OUT_H), "order": order, "items": items,
+                "desc": f"stacked, scaled {OUT_W}x{OUT_H} (pixels resampled)"}
+
+    W, H, pos = _native_composition(sizes, order)
+    if resolution_mode == "native":
+        items = {lbl: {"pos": pos[lbl], "box": sizes[lbl], "fit": False} for lbl in order}
+        return {"mode": "native", "canvas": (W, H), "order": order, "items": items,
+                "desc": f"native {W}x{H} (1:1 pixels, no scaling)"}
+
+    # scaled, for a pair or single camera: fit the same arrangement inside 1280x1080
+    f = min(OUT_W / W, OUT_H / H, 1.0)
+    cw, ch = max(2, _even(round(W * f))), max(2, _even(round(H * f)))
+    items = {
+        lbl: {
+            "pos": (_even(round(pos[lbl][0] * f)), _even(round(pos[lbl][1] * f))),
+            "box": (max(2, _even(round(sizes[lbl][0] * f))), max(2, _even(round(sizes[lbl][1] * f)))),
+            "fit": True,
+        } for lbl in order
     }
-    pos["driver"] = (pos["wide"][0] + ww, rh)
-    return {"mode": "native", "canvas": (W, H), "sizes": sizes, "pos": pos,
-            "desc": f"native {W}x{H} (1:1 pixels, no scaling)"}
+    return {"mode": "1080", "canvas": (cw, ch), "order": order, "items": items,
+            "desc": f"scaled {cw}x{ch} (pixels resampled)"}
 
 
 def _build_render_args(cams, audio, out, fps, encoder_args, threads, hw, nice_level, dur, layout) -> list[str]:
@@ -259,43 +337,35 @@ def _build_render_args(cams, audio, out, fps, encoder_args, threads, hw, nice_le
              "-nostats", "-progress", "pipe:1", "-stats_period", "1",
              "-filter_threads", str(max(1, threads)), "-threads", str(max(1, threads))]
 
-    native = layout["mode"] == "native"
-    for lbl in LABELS:
-        p = cams.get(lbl)
-        if p and os.path.exists(p):
-            if hw:
-                args += ["-hwaccel", "cuda"]          # NVDEC: decode HEVC on the GPU
-            args += ["-framerate", str(fps), "-i", p]
+    order = layout["order"]
+    n = len(order)
+    for lbl in order:
+        if hw:
+            args += ["-hwaccel", "cuda"]          # NVDEC: decode HEVC on the GPU
+        args += ["-framerate", str(fps), "-i", cams[lbl]]
+
+    W, H = layout["canvas"]
+    bg = n
+    args += ["-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r={fps}"]
+
+    steps = []
+    for i, lbl in enumerate(order):
+        it = layout["items"][lbl]
+        if it["fit"]:
+            bw, bh = it["box"]
+            steps.append(f"[{i}:v]scale={bw}:{bh}:force_original_aspect_ratio=decrease,"
+                         f"pad={bw}:{bh}:(ow-iw)/2:(oh-ih)/2,setsar=1[p{i}]")
         else:
-            w, h = layout["sizes"][lbl]
-            size = f"{w}x{h}" if native else f"{OUT_W}x{TOP_H}"
-            args += ["-f", "lavfi", "-i", f"color=c=black:s={size}:r={fps}"]
+            steps.append(f"[{i}:v]setsar=1[p{i}]")
+    # chain: canvas -> overlay each camera at its position -> output
+    steps.append(f"[{bg}:v]format=yuv420p[c0]")
+    for i, lbl in enumerate(order):
+        px, py = layout["items"][lbl]["pos"]
+        out_label = "[v]" if i == n - 1 else f"[c{i + 1}]"
+        steps.append(f"[c{i}][p{i}]overlay={px}:{py}{out_label}")
+    fc = ";".join(steps)
 
-    next_idx = 3
-    if native:
-        W, H = layout["canvas"]
-        args += ["-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r={fps}"]
-        bg = next_idx
-        next_idx += 1
-        pos = layout["pos"]
-        # chain: canvas -> overlay road -> overlay wide -> overlay driver. No scaling anywhere.
-        steps = [f"[{bg}:v]format=yuv420p[c0]"]
-        for n, lbl in enumerate(LABELS):
-            px, py = pos[lbl]
-            out_label = "[v]" if n == len(LABELS) - 1 else f"[c{n + 1}]"
-            steps.append(f"[c{n}][{n}:v]overlay={px}:{py}{out_label}")
-        fc = ";".join(steps)
-    else:
-        fc = (
-            f"[0:v]scale={OUT_W}:{TOP_H}:force_original_aspect_ratio=decrease,"
-            f"pad={OUT_W}:{TOP_H}:(ow-iw)/2:(oh-ih)/2,setsar=1[top];"
-            f"[1:v]scale={BOT_W}:{BOT_H}:force_original_aspect_ratio=decrease,"
-            f"pad={BOT_W}:{BOT_H}:(ow-iw)/2:(oh-ih)/2,setsar=1[wl];"
-            f"[2:v]scale={BOT_W}:{BOT_H}:force_original_aspect_ratio=decrease,"
-            f"pad={BOT_W}:{BOT_H}:(ow-iw)/2:(oh-ih)/2,setsar=1[wr];"
-            f"[wl][wr]hstack=inputs=2[bot];[top][bot]vstack=inputs=2[v]"
-        )
-
+    next_idx = n + 1
     audio_idx = None
     if audio:
         args += ["-i", audio]
@@ -395,19 +465,15 @@ def _run_render(args: list[str], dur: float, on_progress=None, timeout: float = 
 def render_stacked(cams: dict, audio: str | None, out: str, fps: int, encoder_args: list[str],
                    layout: dict, threads: int = 2, hw_decode: bool = False, nice_level: int = 10,
                    on_progress=None) -> tuple[bool, str, str]:
-    """Stack the three cameras into one MP4 using a layout from plan_layout().
+    """Render one output: the cameras in `layout` composed into one MP4.
 
-    cams: {"road": path|None, "wide": path|None, "driver": path|None}
-    Missing cameras become black panes so the layout never shifts.
-    The output is cut to the shortest real camera so audio can't run past the video.
+    cams: {"road": path, "wide": path, "driver": path}; only the labels in layout["order"] are used.
+    The output is cut to the shortest camera so audio can't run past the video.
 
     Returns (ok, message, decode_used). If NVDEC decoding fails, the render is retried
     once with CPU decoding so a bad GPU setup never stops the sync.
     """
-    present = [p for p in cams.values() if p and os.path.exists(p)]
-    if not present:
-        return False, "no camera footage to render", "none"
-    dur = min(raw_duration(p, fps) for p in present)
+    dur = min(raw_duration(cams[lbl], fps) for lbl in layout["order"])
     if dur <= 0:
         return False, "could not read footage length", "none"
 

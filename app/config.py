@@ -25,6 +25,8 @@ class Settings:
     encode_threads: int = int(os.environ.get("ENCODE_THREADS", "2"))  # CPU threads for encoding/decoding
     encode_nice: int = int(os.environ.get("ENCODE_NICE", "10"))       # 0 = normal priority; 1-19 = lower
     fps: int = int(os.environ.get("FPS", "20"))
+    # Which videos to make per drive: comma-separated camera combinations, e.g. "road+wide+driver,road"
+    outputs: str = os.environ.get("OUTPUTS", "road+wide+driver")
     # Output quality
     resolution_mode: str = os.environ.get("RESOLUTION_MODE", "native")  # native (1:1 pixels) | 1080 (scaled)
     video_quality: int = int(os.environ.get("VIDEO_QUALITY", "20"))     # CRF/CQ: lower = better, larger (10-35)

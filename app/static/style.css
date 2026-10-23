@@ -13,8 +13,11 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 h1 { font-size: 18px; margin: 0; }
 h2 { font-size: 16px; margin: 0; }
 h3 { font-size: 14px; margin: 18px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-main { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; padding: 16px 24px 40px; }
+main { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 16px; padding: 16px 24px 40px; }
+@media (max-width: 480px) { header { padding: 12px 16px; } main { padding: 12px 16px 32px; } }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
+.check-title, .check-detail, .check-hint, .m-value, .m-detail, .combo-text, .gpu-name { overflow-wrap: anywhere; }
+ul.checks li, .marker, .combo { min-width: 0; }
 .card.wide { grid-column: 1 / -1; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .muted { color: var(--muted); font-size: 13px; }
@@ -75,6 +78,20 @@ td.num { font-variant-numeric: tabular-nums; }
 .mini { width: 120px; height: 8px; background: var(--bar); border-radius: 999px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
 .mini > i { display: block; height: 100%; background: var(--accent); }
 
+/* settings and video picker side by side; stacked on narrow screens */
+.split { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+.split > .card { min-width: 0; }
+@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+.combo-list { display: grid; gap: 8px; margin-top: 6px; }
+.combo { display: grid; grid-template-columns: auto 60px 1fr; align-items: center; gap: 10px;
+         border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; cursor: pointer; font-size: 14px; color: var(--text); }
+.combo:has(input:checked) { border-color: var(--accent); background: rgba(37, 99, 235, .06); }
+.combo input { width: 18px; height: 18px; margin: 0; padding: 0; border: 0; background: none; accent-color: var(--accent); }
+.glyph { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; width: 60px; height: 40px; padding: 3px;
+         border: 1px solid var(--line); border-radius: 6px; background: var(--bg); box-sizing: border-box; }
+.glyph i { border-radius: 2px; min-width: 0; min-height: 0; opacity: .9; }
+.combo-text { display: grid; gap: 1px; min-width: 0; }
+
 .markers { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
 .marker { border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 10px; padding: 10px 12px; min-width: 0; }
 .marker.ok { border-left-color: var(--ok); }
@@ -89,7 +106,9 @@ td.num { font-variant-numeric: tabular-nums; }
 textarea { width: 100%; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); resize: vertical; }
 .key-status { margin-bottom: 8px; font-size: 14px; }
 form { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px 14px; }
-form label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+form label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; }
+form input, form select { width: 100%; min-width: 0; }
+form input[type="checkbox"] { width: auto; }
 form label.check { display: flex; align-items: center; gap: 8px; }
 input, select { font: inherit; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
 form .actions, #settings-msg { grid-column: 1 / -1; }

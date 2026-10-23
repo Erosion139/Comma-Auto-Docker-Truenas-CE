@@ -69,9 +69,10 @@ class Pipeline:
 
     def _restore_from_state(self):
         for route, info in self.state["done"].items():
+            outs = info.get("outputs") or [info.get("out", "")]
             self.drives[route] = {"route": route, "stamp": info["stamp"], "state": "done",
-                                  "error": "", "out": info.get("out", ""), "bytes": 0,
-                                  "bytes_done": 0, "started_at": None}
+                                  "error": "", "out": ", ".join(os.path.basename(p) for p in outs if p),
+                                  "bytes": 0, "bytes_done": 0, "started_at": None}
         for route, err in self.state["failed"].items():
             if route in self.drives:
                 continue
@@ -351,54 +352,86 @@ class Pipeline:
             video_quality=s.video_quality, preset=s.encode_preset,
             max_bitrate_mbps=s.max_bitrate_mbps, audio_kbps=s.audio_kbps,
         ).clamped()
-        layout = encoder.plan_layout(cams, s.resolution_mode)
         label, enc_args = encoder.resolve_encoder(s.encoder, threads=s.encode_threads, quality=quality)
         use_nvdec, _ = encoder.resolve_decoder(s.decoder)
         self.encoder_label = label
-        with self.lock:
-            self.render = {
-                "route": route, "stamp": stamp, "started": time.time(), "threads": max(1, s.encode_threads),
-                "pct": 0.0, "out_sec": 0.0, "dur": 0.0, "fps": None, "speed": None, "eta": None,
-                "cpu_pct": None, "cpu_sum": 0.0, "cpu_n": 0, "cpu_peak": 0.0,
-                "encoder": label, "decoder": "nvdec" if use_nvdec else "cpu",
-                "decode_fell_back": False, "layout": layout["desc"],
-                "gpu_seen": False, "gpu_enc_now": None, "gpu_dec_now": None,
-                "gpu_enc_peak": 0.0, "gpu_dec_peak": 0.0, "finished": False, "ended": None,
-            }
-        self.log(f"Layout: {layout['desc']}.")
         cap = f", cap {quality.max_bitrate_mbps:g} Mb/s" if quality.max_bitrate_mbps > 0 else ""
         self.log(f"Rendering with {label}, decode {'nvdec' if use_nvdec else 'cpu'}, "
                  f"quality {quality.video_quality} ({quality.preset}){cap}, "
                  f"{s.encode_threads} CPU thread(s), priority nice {s.encode_nice}.")
 
+        combos = encoder.parse_outputs(s.outputs)
         out_dir = os.path.join(s.output_dir, stamp)
         os.makedirs(out_dir, exist_ok=True)
-        out = os.path.join(out_dir, f"{stamp}__stacked.mp4")
-        ok, msg, decode_used = encoder.render_stacked(
-            cams, audio, out, s.fps, enc_args, layout,
-            threads=s.encode_threads, hw_decode=use_nvdec, nice_level=s.encode_nice,
-            on_progress=self._on_render_progress,
-        )
-        shutil.rmtree(work, ignore_errors=True)
-        self._render_summary(stamp, ok)
+        self.log(f"{len(combos)} output(s) for {stamp}: " + ", ".join(encoder.combo_label(c) for c in combos) + ".")
 
-        if not ok:
-            self._mark_failed(route, f"render failed: {msg}")
+        outputs, failures = [], []
+        for idx, combo in enumerate(combos):
+            pick = {lbl: cams.get(lbl) for lbl in combo}
+            pick = {k: v for k, v in pick.items() if v and os.path.exists(v)}
+            if not pick:
+                self.log(f"Skipped {encoder.combo_label(combo)}: none of its cameras were recorded for this drive.")
+                continue
+            layout = encoder.plan_layout(pick, s.resolution_mode)
+            out = os.path.join(out_dir, f"{stamp}__{encoder.combo_name(combo)}.mp4")
+            self._start_output(route, stamp, idx, len(combos), combo, layout, label, use_nvdec, quality)
+            self.log(f"Output {idx + 1}/{len(combos)}: {encoder.combo_label(combo)} · {layout['desc']}")
+            ok, msg, decode_used = encoder.render_stacked(
+                pick, audio, out, s.fps, enc_args, layout,
+                threads=s.encode_threads, hw_decode=use_nvdec, nice_level=s.encode_nice,
+                on_progress=self._on_render_progress,
+            )
+            self._render_summary(stamp, ok)
+            self._finish_output()
+            if ok:
+                outputs.append(out)
+                if msg != "ok":
+                    self.log(f"Note for {os.path.basename(out)}: {msg}")
+                self.log(f"Decoded with {decode_used}. Saved {os.path.basename(out)}.")
+            else:
+                failures.append(f"{encoder.combo_name(combo)}: {msg}")
+                self.log(f"Output {encoder.combo_label(combo)} failed: {msg}")
+        shutil.rmtree(work, ignore_errors=True)
+
+        if not outputs:
+            self._mark_failed(route, "render failed: " + ("; ".join(failures) or "no outputs were possible"))
             return
-        if msg != "ok":
-            self.log(f"Note for {stamp}: {msg}")
-        self.log(f"Decoded with {decode_used}.")
 
         rec["state"] = "done"
-        rec["out"] = out
+        rec["out"] = ", ".join(os.path.basename(p) for p in outputs)
         with self.lock:
-            self.state["done"][route] = {"stamp": stamp, "out": out, "encoder": label}
+            self.state["done"][route] = {"stamp": stamp, "out": outputs[0], "outputs": outputs, "encoder": label}
             self.state["failed"].pop(route, None)
             self._save_state()
-        self.log(f"Done {stamp} → {out} [{label}]")
+        note = f", {len(failures)} failed" if failures else ""
+        self.log(f"Done {stamp} → {len(outputs)} video(s) in {out_dir}{note} [{label}]")
         if s.delete_raw_after_encode:
             shutil.rmtree(local_root, ignore_errors=True)
             self.log(f"Removed raw chunks for {stamp}.")
+
+    def _start_output(self, route, stamp, idx, total, combo, layout, label, use_nvdec, quality):
+        """Begin one output of a drive. The drive's overall progress spans all of its outputs."""
+        with self.lock:
+            self.render = {
+                "route": route, "stamp": stamp, "started": time.time(),
+                "threads": max(1, config.load().encode_threads),
+                "pct": round(idx / total * 100, 1), "out_pct": 0.0,
+                "out_sec": 0.0, "dur": 0.0, "fps": None, "speed": None, "eta": None,
+                "cpu_pct": None, "cpu_sum": 0.0, "cpu_n": 0, "cpu_peak": 0.0,
+                "encoder": label, "decoder": "nvdec" if use_nvdec else "cpu",
+                "decode_fell_back": False, "layout": layout["desc"],
+                "combo_label": encoder.combo_label(combo), "output_index": idx, "outputs_total": total,
+                "gpu_seen": False, "gpu_enc_now": None, "gpu_dec_now": None,
+                "gpu_enc_peak": 0.0, "gpu_dec_peak": 0.0, "finished": False, "ended": None,
+            }
+
+    def _finish_output(self):
+        with self.lock:
+            if self.render is not None:
+                self.render["ended"] = time.time()
+                self.render["finished"] = True
+                self.last_render = dict(self.render)
+                self.render = None
 
     def _on_render_progress(self, snap):
         """Called by the encoder about once a second while ffmpeg runs."""
@@ -415,7 +448,10 @@ class Pipeline:
                     r["decode_fell_back"] = True
                     r["decoder"] = "cpu"
                 return
-            r.update(pct=snap["pct"], out_sec=snap["out_sec"] or 0.0, dur=snap["dur"],
+            # overall drive progress = completed outputs + the current output's share
+            overall = (r["output_index"] + snap["pct"] / 100) / r["outputs_total"] * 100
+            r.update(pct=round(min(overall, 100.0), 1), out_pct=snap["pct"],
+                     out_sec=snap["out_sec"] or 0.0, dur=snap["dur"],
                      fps=snap["fps"], speed=snap["speed"], eta=snap["eta"])
             cpu = snap.get("cpu_pct")
             if cpu is not None:
@@ -438,7 +474,7 @@ class Pipeline:
         if not r:
             return
         elapsed = max(time.time() - r["started"], 1e-6)
-        parts = [f"encoder {r['encoder']}",
+        parts = [f"output {r['combo_label']}", f"encoder {r['encoder']}",
                  f"decoder {r['decoder']}" + (" (NVDEC failed, CPU fallback)" if r["decode_fell_back"] else "")]
         if r["gpu_seen"]:
             parts.append(f"GPU encoder engine peak {r['gpu_enc_peak']:.0f}%")
@@ -573,8 +609,10 @@ def _render_view(r):
 
     return {
         "stamp": r["stamp"], "route": r["route"], "finished": finished,
-        "pct": r["pct"], "out_sec": r["out_sec"], "dur": r["dur"],
+        "pct": r["pct"], "out_pct": r["out_pct"], "out_sec": r["out_sec"], "dur": r["dur"],
         "eta": None if finished else r["eta"], "speed": r["speed"], "fps": r["fps"],
+        "combo_label": r["combo_label"], "output_index": r["output_index"],
+        "outputs_total": r["outputs_total"],
         "elapsed": elapsed, "encoder": enc, "decoder": dec, "layout": r["layout"],
         "markers": markers,
     }

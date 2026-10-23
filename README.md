@@ -189,9 +189,29 @@ Each drive gets a folder named by its recording start time:
 <output>/2026-10-22_14-03-11/2026-10-22_14-03-11__stacked.mp4
 ```
 
-The video is H.264 with the road camera across the top and the wide and driver cameras side by side
-below. The default layout keeps every camera at its full sensor resolution (see *Output quality*).
-Mic audio is aligned to each one-minute segment.
+Each drive is written as one or more H.264 MP4 files, one per camera combination you tick (see
+*Videos per drive*). By default you get a single file: the three-camera stack, with the road camera
+across the top and the wide and driver cameras side by side below. The default layout keeps every
+camera at its full sensor resolution (see *Output quality*). Mic audio is aligned to each one-minute
+segment in every file.
+
+### Videos per drive
+
+The **Videos per drive** panel, to the right of Settings, lists every combination of the three
+cameras: road, wide, and driver on their own; road + wide, road + driver, and wide + driver; and
+all three stacked. Tick any of them. Changes save straight away.
+
+Each ticked video is made for every drive, in the drive's folder, with the combination in the file name:
+
+```
+<output>/2026-10-22_14-03-11/2026-10-22_14-03-11__stacked.mp4
+<output>/2026-10-22_14-03-11/2026-10-22_14-03-11__road.mp4
+<output>/2026-10-22_14-03-11/2026-10-22_14-03-11__road-wide.mp4
+```
+
+Each video is a separate encode of the same footage, so encoding time adds up. The drive's progress
+bar covers all of its videos in order. Pair a full-resolution archive stack with a smaller single-camera
+video on the **Scaled to 1080p** layout if you want something quick to share.
 
 ## Output quality
 
@@ -199,7 +219,7 @@ Set these in **Settings → Output quality**, or as environment variables for de
 
 | Setting | Default | Meaning |
 |---|---|---|
-| **Layout** (`RESOLUTION_MODE`) | `native` | `native` keeps each camera at its own resolution with no scaling, so every pixel maps 1:1. With the current cameras the canvas is **3272×2416**. `1080` scales everything into a fixed **1280×1080** frame (smaller and faster, but pixels are resampled). |
+| **Layout** (`RESOLUTION_MODE`) | `native` | `native` keeps each camera at its own resolution with no scaling, so every pixel maps 1:1. With the current cameras the canvas is **3272×2416**. `1080` scales everything to fit a **1280×1080** frame (smaller and faster, but pixels are resampled). The three-camera stack keeps its fixed 1280×1080 layout, and the other combinations are scaled to fit the same frame and keep their shape. |
 | **Video quality** (`VIDEO_QUALITY`) | `20` | CRF (CPU) or CQ (GPU) on a 10–35 scale. Lower is sharper and larger. About 18–22 is visually transparent for most footage. Each +6 roughly halves the file size. |
 | **Encode preset** (`ENCODE_PRESET`) | `balanced` | `speed`, `balanced`, or `quality`. Slower presets give a smaller file at the same quality, but take more CPU or GPU time. |
 | **Max bitrate** (`MAX_BITRATE_MBPS`) | `0` | `0` means no cap. Set a value such as `6` in Mb/s to keep file sizes predictable. |
@@ -234,7 +254,8 @@ Set these in the web UI, or as environment variables for defaults.
 | `ENCODE_THREADS` | `2` | CPU threads the encoder may use. Lower this if the UI becomes slow. |
 | `ENCODE_NICE` | `10` | Scheduling priority of encoding (0 = normal, up to 19). Higher keeps the UI responsive. |
 | `FPS` | `20` | Frame rate of the recorded footage |
-| `RESOLUTION_MODE` | `native` | `native` (1:1 camera pixels) or `1080` (scaled 1280×1080). See *Output quality*. |
+| `OUTPUTS` | `road+wide+driver` | Videos to make for each drive, as comma-separated camera combinations, for example `road+wide+driver,road`. Set in the **Videos per drive** panel. |
+| `RESOLUTION_MODE` | `native` | `native` (1:1 camera pixels) or `1080` (scaled to fit 1280×1080). See *Output quality*. |
 | `VIDEO_QUALITY` | `20` | CRF/CQ, 10–35. Lower is better and larger. |
 | `ENCODE_PRESET` | `balanced` | `speed`, `balanced`, or `quality` |
 | `MAX_BITRATE_MBPS` | `0` | Cap on video bitrate in Mb/s. `0` = no cap. |

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Comma Footage Sync</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -104,6 +105,7 @@
     </div>
   </section>
 
+  <div class="split">
   <section class="card">
     <div class="card-head"><h2>Settings</h2></div>
     <form id="settings">
@@ -134,8 +136,8 @@
       <label>Encoder priority (nice 0–19; higher = leaves more CPU for the UI) <input name="encode_nice" type="number" min="0" max="19"></label>
       <label>Layout
         <select name="resolution_mode">
-          <option value="native">Native 1:1 pixels (each camera at full resolution)</option>
-          <option value="1080">Scaled 1280×1080 (smaller files, faster)</option>
+          <option value="native">Native 1:1 (full resolution)</option>
+          <option value="1080">Scaled to 1080p</option>
         </select>
       </label>
       <label>Video quality (CRF / CQ, 10–35; lower = better and larger) <input name="video_quality" type="number" min="10" max="35"></label>
@@ -157,6 +159,20 @@
       <p id="settings-msg" class="muted"></p>
     </form>
   </section>
+
+  <section class="card outputs-card">
+    <div class="card-head">
+      <h2>Videos per drive</h2>
+      <span id="out-count" class="pill ok">3 videos per drive</span>
+    </div>
+    <p class="muted small">
+      Tick each video to make for every drive: single cameras, pairs, or the three-camera stack.
+      Each one is a separate encode, so more videos take longer. All of them go in the drive's folder.
+    </p>
+    <div id="combo-list" class="combo-list"></div>
+    <p id="out-msg" class="muted small"></p>
+  </section>
+  </div>
 
   <section class="card wide">
     <div class="card-head"><h2>Log</h2></div>
