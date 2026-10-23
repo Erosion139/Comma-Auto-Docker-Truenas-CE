@@ -1,4 +1,4 @@
-# Comma Footage Sync
+# Comma Footage Sync - (Clauded application) 
 
 Pulls dashcam footage off a comma device over your local network and turns each drive
 into one stacked H.264 MP4 (road on top, wide and driver below, mic audio included).
@@ -6,25 +6,6 @@ Runs as a Docker container with a web UI on a port you choose. Built for TrueNAS
 
 Based on the method in [sourylime/comma-sync](https://github.com/sourylime/comma-sync):
 SSH as the `comma` user, footage in `/data/media/0/realdata/`, one folder per segment.
-
----
-
-## Part 1 — Publish the image (one time, on GitHub)
-
-TrueNAS installs apps from a Docker image. GitHub builds that image for you.
-
-1. Push this code to your repository's `main` branch.
-2. Open the **Actions** tab. The *Build and publish image* workflow runs and publishes the image to `ghcr.io/<your-user>/<repo>`.
-3. Make the image public so TrueNAS can pull it without a login:
-   your profile → **Packages** → select the package → **Package settings** → **Change visibility** → **Public**.
-4. To make a versioned release, tag it: `git tag v1.0.0 && git push origin v1.0.0`.
-   This publishes `1.0.0`, `1.0`, and `latest`.
-
-Your image name is `ghcr.io/<your-user>/<repo>` in lowercase. Write it down for Part 2.
-
----
-
-## Part 2 — Install in TrueNAS (guided Custom App wizard)
 
 1. In the TrueNAS web UI, go to **Apps** → **Discover Apps** → **Custom App**.
 
@@ -90,7 +71,7 @@ Your data stays in the app's data folder and the output dataset, so you can edit
 
 ---
 
-## Part 3 — Connect your comma (in the web UI)
+Connect your comma (in the web UI)
 
 ### a. Register the app's SSH key
 
